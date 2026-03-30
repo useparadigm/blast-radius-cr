@@ -53,16 +53,24 @@ def fetch_pr_data(pr_url: str) -> tuple[str, Path, str]:
     repo_slug, pr_number = parse_pr_url(pr_url)
     log(f"Fetching PR #{pr_number} from {repo_slug}...")
 
-    diff = subprocess.run(
+    diff_result = subprocess.run(
         ["gh", "pr", "diff", pr_number, "-R", repo_slug],
-        capture_output=True, text=True, check=True,
-    ).stdout
+        capture_output=True, text=True,
+    )
+    if diff_result.returncode != 0:
+        log(f"gh pr diff failed: {diff_result.stderr.strip()}")
+        raise RuntimeError(f"Failed to fetch PR diff: {diff_result.stderr.strip()}")
+    diff = diff_result.stdout
 
-    pr_info = json.loads(subprocess.run(
+    view_result = subprocess.run(
         ["gh", "pr", "view", pr_number, "-R", repo_slug,
          "--json", "headRefName,headRepository,baseRefName"],
-        capture_output=True, text=True, check=True,
-    ).stdout)
+        capture_output=True, text=True,
+    )
+    if view_result.returncode != 0:
+        log(f"gh pr view failed: {view_result.stderr.strip()}")
+        raise RuntimeError(f"Failed to fetch PR info: {view_result.stderr.strip()}")
+    pr_info = json.loads(view_result.stdout)
 
     head_branch = pr_info["headRefName"]
     base_ref = pr_info["baseRefName"]
