@@ -8,16 +8,10 @@ from .resolver import FunctionContext
 
 
 SYSTEM_PROMPT = """\
-You are a senior code reviewer performing blast radius analysis. \
-You analyze code changes and their impact on callers and callees.
-
-For each changed function, you receive:
-- The diff hunks (what changed)
-- The function's full body
-- All functions that CALL this function (callers) with their bodies
-- All functions this function CALLS (callees) with their bodies
-
-Your job is to identify potential issues caused by the changes."""
+You are a paranoid senior code reviewer performing blast radius analysis.
+Your job is to find ways that code changes WILL break callers and callees.
+You are not here to be nice. You are here to prevent production incidents.
+Assume every change is guilty until proven innocent."""
 
 ANALYSIS_PROMPT = """\
 Analyze the blast radius of the following code changes.
@@ -26,55 +20,104 @@ Analyze the blast radius of the following code changes.
 
 ---
 
-For each changed function, classify every finding as:
+You MUST work through the following checklist step by step. Do NOT skip steps.
+Think hard about each one. Write your reasoning for each step.
 
-**BREAKING** — Will cause failures if callers/consumers are not updated:
-- Signature changes (args added/removed/reordered)
-- Return type/shape changes
-- Removed functionality that callers depend on
-- Exception/error behavior changes
+## Step 1: What exactly changed?
+
+For each changed function, describe precisely:
+- What did the old version do? (infer from context, callers, function name)
+- What does the new version do?
+- What is DIFFERENT between old and new behavior?
+
+## Step 2: Return value analysis
+
+For each changed function, answer:
+- Did the return VALUE change for any input? (e.g. None → "", 0 → False, list → tuple)
+- Did the return TYPE change? (e.g. Optional[str] → str, int → float)
+- For each caller: what does it do with the return value? Will it still work?
+- CRITICAL: A new default parameter that changes the return value for EXISTING callers
+  is BREAKING, not safe. Existing callers don't pass the new param, so they get
+  the new default, which changes what they receive back.
+
+## Step 3: Argument/signature analysis
+
+For each changed function, answer:
+- Were args added, removed, renamed, or reordered?
+- If a new arg was added with a default: does the default preserve OLD behavior exactly?
+  Or does it change behavior for existing callers who don't pass it?
+- Could any caller be passing positional args that now map to wrong parameters?
+
+## Step 4: Side effect analysis
+
+For each changed function, answer:
+- Did any side effects change? (DB writes, API calls, logging, file I/O, caching)
+- Does it now raise different exceptions?
+- Does it now silently swallow errors it used to raise?
+- Performance: could this be called in a hot path? Did complexity change?
+
+## Step 5: Caller-by-caller impact
+
+For EACH caller provided, answer:
+- Does this caller check the return value? How? (is None, == "", truthiness, type check)
+- Does this caller pass all required args correctly?
+- Will this caller's behavior change as a result of the function change?
+- Be specific: quote the line in the caller that will break or change.
+
+## Step 6: Classify findings
+
+Now classify each finding:
+
+**BREAKING** — Will cause failures or silently wrong behavior:
+- Return value changes for existing callers (even with "optional" new params)
+- Return type changes (None → "", None → 0, etc.)
+- Callers that check `is None` when function now returns `""`
+- Callers that use truthiness checks when falsy values changed
+- Signature changes that break positional arg mapping
+- Removed or renamed functionality
+- Changed exception behavior
 
 **CAUTION** — May cause issues, needs verification:
-- Behavioral changes (same interface, different semantics)
-- Performance changes in hot paths
-- New edge cases not handled by callers
-- Changed side effects (DB writes, API calls, logging)
+- Behavioral changes where caller impact is unclear
+- Performance changes in potentially hot paths
+- New edge cases
+- Changed side effects
 
-**SAFE** — No impact on callers/callees:
-- Internal refactors with unchanged interface
-- Additive changes (new optional params with defaults)
-- Documentation/comment changes
-- Formatting changes
+**SAFE** — Only if you can PROVE no caller is affected:
+- Pure internal refactors with identical input→output mapping
+- Formatting/comment/docstring only changes
+- New code paths that existing callers cannot reach
 
-IMPORTANT: You must start your response with exactly one of these verdict lines:
+## Step 7: Verdict
 
-**VERDICT: FAIL** — if any BREAKING findings exist
-**VERDICT: WARNING** — if CAUTION findings exist but no BREAKING
-**VERDICT: PASS** — if all findings are SAFE or no issues found
+Based on your findings, output your verdict.
 
-Then structure the rest as:
+IMPORTANT: Start your final report with exactly one of:
+**VERDICT: FAIL** — if any BREAKING findings
+**VERDICT: WARNING** — if CAUTION findings but no BREAKING
+**VERDICT: PASS** — ONLY if you can prove all changes are safe for all callers
+
+Then write the report:
 
 ## Blast Radius Analysis
 
 ### Summary
-One paragraph: what changed and the overall risk level.
+What changed and the risk level.
 
 ### Findings
 
 For each finding:
 ```
-SEVERITY | Function → Affected | What
-  Why: mechanism of impact
-  Evidence: specific code reference
+SEVERITY | Function → Affected caller(s) | What changed
+  Why: the mechanism — HOW does this break the caller? Be specific.
+  Evidence: quote the exact line in the caller that breaks
   Action: what to do about it
 ```
 
 ### Action Plan
 1. [BLOCK MERGE] — must fix before merging
 2. [BEFORE MERGE] — should fix, can be separate PR
-3. [AFTER MERGE] — monitor or follow-up
-
-If there are no issues, output "**VERDICT: PASS**" and explain why the changes are safe."""
+3. [AFTER MERGE] — monitor or follow-up"""
 
 
 def build_prompt(contexts: list[FunctionContext]) -> str:
