@@ -379,30 +379,35 @@ def assemble_context(blast_radius: list[ChangedFunction], diff_text: str) -> str
 
 SYSTEM_PROMPT = """You are reviewing a pull request. The reviewer has already read the diff — do NOT restate what changed.
 
-You are given the diff, each changed function, and the source of every function that calls it (callers) or is called by it (callees). Your job is to read each caller/callee and give a concrete verdict.
+You are given the diff, each changed function, and the source of every function that calls it (callers) or is called by it (callees). Your job is to read each caller/callee and assess risk.
 
-For each changed function, output:
+For each changed function, output EXACTLY this format:
 
 ### `function_name` (file:line)
 
 **What changed:** one sentence max.
 
-**Caller verdicts:**
+Then list ONLY callers/callees that need attention:
+- ⚠️ `needs review` — `CallerName` (file:line) — concrete reason
+- 🔴 `likely breaks` — `CallerName` (file:line) — concrete reason
 
-For each caller, one line:
-- `safe` / `needs review` / `likely breaks` — `CallerName` (file:line) — reason
+Be specific: "passes user input that may contain meaningful leading spaces" not "might be affected".
 
-Be specific: "passes user input that may contain meaningful leading spaces" not "might be affected by whitespace changes". If you can tell from the source that a caller is safe, say so and why.
+After the flagged items (or if there are none), add one summary line:
+> ✅ N other callers are safe — [one-sentence reason they're all fine]
 
-**Callee verdicts:** (same format, only if callees exist)
+If ALL callers are safe, just output:
+> ✅ All N callers are safe — [reason]
 
-**Overall risk:** one sentence summary.
+Same for callees if they exist.
+
+End with:
+**Risk: low/medium/high** — one sentence.
 
 Rules:
-- No preamble, no headers beyond what's specified above
-- No "recommended actions" or "add tests" advice
-- If all callers are safe, just say so — don't invent risks
-- If you can't determine risk from the source alone, say "needs review" with what to check"""
+- No preamble, no closing remarks, no "recommended actions"
+- Never list safe callers individually — batch them into the summary line
+- Be ruthlessly concise"""
 
 
 def analyze_with_llm(context: str) -> str:
@@ -444,43 +449,26 @@ def generate_report(
     lines.append(f"**{len(blast_radius)}** functions changed | **{total_callers}** callers | **{total_callees}** callees")
     lines.append(f"")
 
-    # Callers/callees per changed function (collapsible if many)
-    for cf in blast_radius:
-        lines.append(f"### `{cf.info.name}` (`{cf.info.file_path}:{cf.info.start_line}`)")
-        lines.append(f"")
-
-        if cf.callers:
-            caller_lines = [f"- `{c.name}` (`{c.file_path}:{c.start_line}`)" for c in cf.callers]
-            if len(cf.callers) > 5:
-                lines.append(f"<details>")
-                lines.append(f"<summary>Callers ({len(cf.callers)})</summary>")
-                lines.append(f"")
-                lines.extend(caller_lines)
-                lines.append(f"")
-                lines.append(f"</details>")
-            else:
-                lines.append(f"**Callers ({len(cf.callers)}):**")
-                lines.extend(caller_lines)
-            lines.append(f"")
-
-        if cf.callees:
-            callee_lines = [f"- `{c.name}` (`{c.file_path}:{c.start_line}`)" for c in cf.callees]
-            if len(cf.callees) > 5:
-                lines.append(f"<details>")
-                lines.append(f"<summary>Callees ({len(cf.callees)})</summary>")
-                lines.append(f"")
-                lines.extend(callee_lines)
-                lines.append(f"")
-                lines.append(f"</details>")
-            else:
-                lines.append(f"**Callees ({len(cf.callees)}):**")
-                lines.extend(callee_lines)
-            lines.append(f"")
-
-    # LLM analysis
-    lines.append(f"---")
-    lines.append(f"")
+    # LLM analysis first — this is what matters
     lines.append(analysis)
+    lines.append(f"")
+
+    # Full caller/callee lists — always collapsed as reference
+    lines.append(f"<details>")
+    lines.append(f"<summary>Full caller/callee list</summary>")
+    lines.append(f"")
+    for cf in blast_radius:
+        lines.append(f"#### `{cf.info.name}` (`{cf.info.file_path}:{cf.info.start_line}`)")
+        if cf.callers:
+            for c in cf.callers:
+                lines.append(f"- `{c.name}` (`{c.file_path}:{c.start_line}`)")
+        if cf.callees:
+            lines.append(f"")
+            lines.append(f"Callees:")
+            for c in cf.callees:
+                lines.append(f"- `{c.name}` (`{c.file_path}:{c.start_line}`)")
+        lines.append(f"")
+    lines.append(f"</details>")
 
     return "\n".join(lines)
 
