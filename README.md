@@ -119,15 +119,38 @@ Python, JavaScript, TypeScript, Go (via tree-sitter grammars).
 
 ```
 blast-radius [OPTIONS]
-  --ref TEXT      Git ref to diff against (default: auto-detect)
-  --diff FILE     Path to a patch/diff file
-  --fuel INT      Max callers per function (default: 15)
-  --model TEXT    LLM model (default: claude-sonnet-4-20250514)
-  --no-ai         Output raw context only, skip LLM
-  --format        markdown | json
-  --output FILE   Write output to file
-  --verbose       Show resolution details
-  --repo PATH     Repository directory (default: cwd)
+  --ref TEXT            Git ref to diff against (default: auto-detect)
+  --diff FILE           Path to a patch/diff file
+  --max-callers INT     Max callers per function (default: 15)
+  --max-functions INT   Max changed functions to analyze (default: 20)
+  --max-tokens INT      Max input tokens for LLM (default: 100000)
+  --max-body-lines INT  Truncate function bodies beyond N lines (default: 50)
+  --model TEXT          LLM model (default: claude-sonnet-4-20250514)
+  --no-ai               Output raw context only, skip LLM
+  --format              markdown | json
+  --output FILE         Write output to file
+  --verbose             Show resolution details and cost estimate
+  --repo PATH           Repository directory (default: cwd)
+```
+
+### Budget control
+
+By default, blast-radius caps LLM input at ~100K tokens (~$0.30 on Sonnet). For large PRs you can tune:
+
+```bash
+# Cheap and fast: fewer callers, smaller bodies
+blast-radius --max-callers 5 --max-body-lines 30 --max-tokens 50000
+
+# Thorough: more context
+blast-radius --max-callers 30 --max-functions 50 --max-tokens 200000
+
+# See what you're paying before running
+blast-radius --no-ai --verbose  # shows token estimate and cost
+```
+
+With `--verbose`, you'll see:
+```
+Context: ~12,450 tokens (3 functions, 8 callers, 2 callees) | Estimated cost: $0.037 (claude-sonnet-4-20250514)
 ```
 
 ## Development

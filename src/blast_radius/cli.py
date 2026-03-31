@@ -37,14 +37,18 @@ def _extract_file_diffs(diff_text: str) -> dict[str, str]:
 @click.command()
 @click.option("--ref", default=None, help="Git ref to diff against (default: auto-detect)")
 @click.option("--diff", "diff_file", default=None, type=click.Path(exists=True), help="Path to a patch/diff file")
-@click.option("--fuel", default=15, type=int, help="Max callers per function (default: 15)")
+@click.option("--max-callers", default=15, type=int, help="Max callers per function (default: 15)")
+@click.option("--max-functions", default=20, type=int, help="Max changed functions to analyze (default: 20)")
+@click.option("--max-tokens", default=100_000, type=int, help="Max input tokens for LLM (default: 100000)")
+@click.option("--max-body-lines", default=50, type=int, help="Truncate function bodies beyond N lines (default: 50)")
 @click.option("--model", default="claude-sonnet-4-20250514", help="LLM model for analysis")
 @click.option("--no-ai", is_flag=True, help="Output raw context only, skip AI analysis")
 @click.option("--format", "fmt", type=click.Choice(["markdown", "json"]), default="markdown", help="Output format")
 @click.option("--output", "output_file", default=None, type=click.Path(), help="Write output to file")
-@click.option("--verbose", is_flag=True, help="Show resolution details")
+@click.option("--verbose", is_flag=True, help="Show resolution details and cost estimate")
 @click.option("--repo", default=".", help="Repository directory (default: current dir)")
-def main(ref, diff_file, fuel, model, no_ai, fmt, output_file, verbose, repo):
+def main(ref, diff_file, max_callers, max_functions, max_tokens, max_body_lines,
+         model, no_ai, fmt, output_file, verbose, repo):
     """Analyze blast radius of code changes."""
     # Step 1: Get diff
     try:
@@ -84,7 +88,7 @@ def main(ref, diff_file, fuel, model, no_ai, fmt, output_file, verbose, repo):
     contexts = []
     for cf in all_changed:
         ctx = resolve_context(
-            cf.symbol, repo_dir=repo, change_type=cf.change_type, fuel=fuel,
+            cf.symbol, repo_dir=repo, change_type=cf.change_type, fuel=max_callers,
         )
         ctx.diff_text = file_diffs.get(cf.symbol.file_path, "")
         contexts.append(ctx)
@@ -94,7 +98,20 @@ def main(ref, diff_file, fuel, model, no_ai, fmt, output_file, verbose, repo):
                 err=True,
             )
 
-    # Step 5: Output
+    # Step 5: Apply budget
+    from .budget import apply_budget
+    contexts, budget = apply_budget(
+        contexts,
+        max_tokens=max_tokens,
+        max_functions=max_functions,
+        max_callers=max_callers,
+        max_body_lines=max_body_lines,
+        model=model,
+    )
+    if verbose:
+        click.echo(budget.summary(), err=True)
+
+    # Step 6: Output
     verdict = "PASS"
     if no_ai:
         if fmt == "json":
@@ -120,11 +137,9 @@ def main(ref, diff_file, fuel, model, no_ai, fmt, output_file, verbose, repo):
     else:
         click.echo(output)
 
-    # Exit codes: 0=PASS, 1=FAIL, 2=WARNING
+    # Exit codes: 0=PASS, 1=FAIL
     if verdict == "FAIL":
         sys.exit(1)
-    elif verdict == "WARNING":
-        sys.exit(0)  # warnings don't block CI by default
 
 
 if __name__ == "__main__":
