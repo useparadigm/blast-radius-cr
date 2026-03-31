@@ -416,7 +416,7 @@ def analyze_with_llm(context: str) -> str:
     log("Sending to OpenAI for analysis...")
 
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.4-mini",
         max_tokens=4096,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
