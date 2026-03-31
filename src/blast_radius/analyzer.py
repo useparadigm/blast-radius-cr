@@ -8,10 +8,16 @@ from .resolver import FunctionContext
 
 
 SYSTEM_PROMPT = """\
-You are a paranoid senior code reviewer performing blast radius analysis.
-Your job is to find ways that code changes WILL break callers and callees.
-You are not here to be nice. You are here to prevent production incidents.
-Assume every change is guilty until proven innocent."""
+You are a code reviewer performing blast radius analysis on pull requests.
+Your job is to find how code changes affect callers and callees.
+Assume every change is guilty until proven innocent.
+
+Output rules:
+- Be concise. Developers will read this on a PR — respect their time.
+- PASS findings: one line each, no explanation needed.
+- WARNING findings: 2-3 lines — what changed, who's affected, what to check.
+- FAIL findings: full detail — mechanism, evidence, action. These block merges.
+- Skip boilerplate. No "let me analyze...", no restating the code. Go straight to findings."""
 
 ANALYSIS_PROMPT = """\
 Analyze the blast radius of the following code changes.
@@ -20,104 +26,52 @@ Analyze the blast radius of the following code changes.
 
 ---
 
-You MUST work through the following checklist step by step. Do NOT skip steps.
-Think hard about each one. Write your reasoning for each step.
+Think through this checklist internally (do NOT write it out):
+1. What exactly changed? Old behavior vs new behavior.
+2. Return values: did any return value/type change for existing callers? A new default param that changes the return value IS breaking.
+3. Signatures: do existing callers still pass correct args?
+4. Side effects: DB, API, exceptions, performance changes?
+5. Per caller: will it break or behave differently? Quote the specific line.
 
-## Step 1: What exactly changed?
+Then output ONLY the report below. No reasoning steps, no checklist — just the report.
 
-For each changed function, describe precisely:
-- What did the old version do? (infer from context, callers, function name)
-- What does the new version do?
-- What is DIFFERENT between old and new behavior?
+---
 
-## Step 2: Return value analysis
+Start with exactly one verdict line:
 
-For each changed function, answer:
-- Did the return VALUE change for any input? (e.g. None → "", 0 → False, list → tuple)
-- Did the return TYPE change? (e.g. Optional[str] → str, int → float)
-- For each caller: what does it do with the return value? Will it still work?
-- CRITICAL: A new default parameter that changes the return value for EXISTING callers
-  is BREAKING, not safe. Existing callers don't pass the new param, so they get
-  the new default, which changes what they receive back.
-
-## Step 3: Argument/signature analysis
-
-For each changed function, answer:
-- Were args added, removed, renamed, or reordered?
-- If a new arg was added with a default: does the default preserve OLD behavior exactly?
-  Or does it change behavior for existing callers who don't pass it?
-- Could any caller be passing positional args that now map to wrong parameters?
-
-## Step 4: Side effect analysis
-
-For each changed function, answer:
-- Did any side effects change? (DB writes, API calls, logging, file I/O, caching)
-- Does it now raise different exceptions?
-- Does it now silently swallow errors it used to raise?
-- Performance: could this be called in a hot path? Did complexity change?
-
-## Step 5: Caller-by-caller impact
-
-For EACH caller provided, answer:
-- Does this caller check the return value? How? (is None, == "", truthiness, type check)
-- Does this caller pass all required args correctly?
-- Will this caller's behavior change as a result of the function change?
-- Be specific: quote the line in the caller that will break or change.
-
-## Step 6: Classify findings
-
-Now classify each finding:
-
-**BREAKING** — Will cause failures or silently wrong behavior:
-- Return value changes for existing callers (even with "optional" new params)
-- Return type changes (None → "", None → 0, etc.)
-- Callers that check `is None` when function now returns `""`
-- Callers that use truthiness checks when falsy values changed
-- Signature changes that break positional arg mapping
-- Removed or renamed functionality
-- Changed exception behavior
-
-**CAUTION** — May cause issues, needs verification:
-- Behavioral changes where caller impact is unclear
-- Performance changes in potentially hot paths
-- New edge cases
-- Changed side effects
-
-**SAFE** — Only if you can PROVE no caller is affected:
-- Pure internal refactors with identical input→output mapping
-- Formatting/comment/docstring only changes
-- New code paths that existing callers cannot reach
-
-## Step 7: Verdict
-
-Based on your findings, output your verdict.
-
-IMPORTANT: Start your final report with exactly one of:
 **VERDICT: FAIL** — if any BREAKING findings
 **VERDICT: WARNING** — if CAUTION findings but no BREAKING
-**VERDICT: PASS** — ONLY if you can prove all changes are safe for all callers
+**VERDICT: PASS** — if all safe
 
-Then write the report:
-
-## Blast Radius Analysis
+Then:
 
 ### Summary
-What changed and the risk level.
+1-2 sentences: what changed and risk level.
 
 ### Findings
 
-For each finding:
+PASS — list safe changes in one line each, or omit if nothing interesting.
+
+For WARNING findings:
 ```
-SEVERITY | Function → Affected caller(s) | What changed
-  Why: the mechanism — HOW does this break the caller? Be specific.
-  Evidence: quote the exact line in the caller that breaks
-  Action: what to do about it
+⚠️ CAUTION | function → affected | what changed
+  Impact: who's affected and how
+  Check: what to verify before merging
 ```
 
-### Action Plan
-1. [BLOCK MERGE] — must fix before merging
-2. [BEFORE MERGE] — should fix, can be separate PR
-3. [AFTER MERGE] — monitor or follow-up"""
+For FAIL findings:
+```
+🔴 BREAKING | function → affected caller(s) | what changed
+  Why: HOW this breaks the caller — be specific
+  Evidence: the exact line in the caller that breaks
+  Fix: what to do
+```
+
+### Action items
+Only if there are WARNING or FAIL findings. One line each:
+- 🚫 [BLOCK] — must fix before merge
+- ⚠️ [TODO] — fix before or after merge
+"""
 
 
 def build_prompt(contexts: list[FunctionContext]) -> str:
