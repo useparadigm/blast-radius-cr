@@ -111,20 +111,6 @@ The LLM sees the full diff, the changed function body, and the bodies of all cal
 
 Verdict: **FAIL** (has BREAKING) / **WARNING** (has CAUTION) / **PASS** (all SAFE).
 
-## Resolution accuracy
-
-Tested against 7 synthetic fixtures covering decorators, class inheritance, async/await, closures, chained calls, multi-file callers, and aliasing.
-
-- **100% recall** on 19 ground truth caller relationships
-- **0 false positives** on validated test cases
-- **Known limitation**: function aliasing (`calc_score = compute_score`) — grep searches for the original name only
-
-```
-$ pytest tests/accuracy/ -v
-38 passed, 1 skipped in 0.25s
-=== OVERALL RECALL: 19/19 = 100% ===
-```
-
 ## Supported languages
 
 Python, JavaScript, TypeScript, Go (via tree-sitter grammars).
@@ -150,7 +136,7 @@ blast-radius [OPTIONS]
 git clone https://github.com/useparadigm/blast-radius-cr.git
 cd blast-radius-cr
 pip install -e ".[dev]"
-pytest tests/ --ignore=tests/ai -v    # 79 tests, ~0.5s
+pytest
 ```
 
 ## License
