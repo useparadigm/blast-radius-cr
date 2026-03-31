@@ -69,18 +69,23 @@ def main(ref, diff_file, fuel, model, no_ai, fmt, output_file, verbose, repo):
             )
 
     # Step 5: Output
+    verdict = "PASS"
     if no_ai:
         if fmt == "json":
             output = format_context_json(contexts)
         else:
             output = format_context_markdown(contexts)
     else:
-        from .analyzer import analyze
+        from .analyzer import analyze, parse_verdict
         try:
             output = analyze(contexts, model=model)
+            verdict = parse_verdict(output)
         except RuntimeError as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)
+
+    if verbose:
+        click.echo(f"Verdict: {verdict}", err=True)
 
     if output_file:
         with open(output_file, "w") as f:
@@ -88,6 +93,12 @@ def main(ref, diff_file, fuel, model, no_ai, fmt, output_file, verbose, repo):
         click.echo(f"Output written to {output_file}", err=True)
     else:
         click.echo(output)
+
+    # Exit codes: 0=PASS, 1=FAIL, 2=WARNING
+    if verdict == "FAIL":
+        sys.exit(1)
+    elif verdict == "WARNING":
+        sys.exit(0)  # warnings don't block CI by default
 
 
 if __name__ == "__main__":

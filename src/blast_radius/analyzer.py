@@ -46,7 +46,13 @@ For each changed function, classify every finding as:
 - Documentation/comment changes
 - Formatting changes
 
-Structure your response as:
+IMPORTANT: You must start your response with exactly one of these verdict lines:
+
+**VERDICT: FAIL** — if any BREAKING findings exist
+**VERDICT: WARNING** — if CAUTION findings exist but no BREAKING
+**VERDICT: PASS** — if all findings are SAFE or no issues found
+
+Then structure the rest as:
 
 ## Blast Radius Analysis
 
@@ -68,7 +74,7 @@ SEVERITY | Function → Affected | What
 2. [BEFORE MERGE] — should fix, can be separate PR
 3. [AFTER MERGE] — monitor or follow-up
 
-If there are no issues, say "No blast radius concerns found." and explain why the changes are safe."""
+If there are no issues, output "**VERDICT: PASS**" and explain why the changes are safe."""
 
 
 def build_prompt(contexts: list[FunctionContext]) -> str:
@@ -130,6 +136,26 @@ def analyze(contexts: list[FunctionContext], model: str = "claude-sonnet-4-20250
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
+
+
+def parse_verdict(report: str) -> str:
+    """Extract verdict from LLM report. Returns PASS, WARNING, or FAIL."""
+    for line in report.splitlines()[:5]:
+        upper = line.upper()
+        if "VERDICT:" in upper:
+            if "FAIL" in upper:
+                return "FAIL"
+            if "WARNING" in upper:
+                return "WARNING"
+            if "PASS" in upper:
+                return "PASS"
+    # Fallback: scan for severity markers
+    upper_report = report.upper()
+    if "BREAKING" in upper_report:
+        return "FAIL"
+    if "CAUTION" in upper_report:
+        return "WARNING"
+    return "PASS"
 
 
 def _analyze_openai(prompt: str, model: str = "gpt-4o") -> str:
