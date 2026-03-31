@@ -134,11 +134,19 @@ def analyze(contexts: list[FunctionContext], model: str = "claude-sonnet-4-20250
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=16000,
+        thinking={
+            "type": "enabled",
+            "budget_tokens": 10000,
+        },
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
     )
-    return response.content[0].text
+    # With extended thinking, text blocks contain the visible output
+    for block in response.content:
+        if block.type == "text":
+            return block.text
+    return response.content[-1].text
 
 
 def parse_verdict(report: str) -> str:
