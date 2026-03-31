@@ -128,6 +128,12 @@ def build_prompt(contexts: list[FunctionContext]) -> str:
         cls = f"{f.containing_class}." if f.containing_class else ""
         parts.append(f"### Changed function: `{cls}{f.name}` ({f.file_path}:{f.start_line}) [{ctx.change_type}]")
         parts.append("")
+
+        if ctx.diff_text:
+            parts.append("**Diff (what changed — lines prefixed with - are OLD, + are NEW):**")
+            parts.append(f"```diff\n{ctx.diff_text}\n```")
+            parts.append("")
+
         parts.append("**Current body:**")
         parts.append(f"```\n{f.body}\n```")
         parts.append("")

@@ -12,6 +12,28 @@ from .report import format_context_json, format_context_markdown
 from .symbols import identify_changed_functions
 
 
+def _extract_file_diffs(diff_text: str) -> dict[str, str]:
+    """Split a unified diff into per-file diffs keyed by new file path."""
+    files: dict[str, str] = {}
+    current_path = None
+    current_lines: list[str] = []
+
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git"):
+            if current_path and current_lines:
+                files[current_path] = "\n".join(current_lines)
+            parts = line.split(" b/", 1)
+            current_path = parts[1] if len(parts) > 1 else None
+            current_lines = [line]
+        elif current_path is not None:
+            current_lines.append(line)
+
+    if current_path and current_lines:
+        files[current_path] = "\n".join(current_lines)
+
+    return files
+
+
 @click.command()
 @click.option("--ref", default=None, help="Git ref to diff against (default: auto-detect)")
 @click.option("--diff", "diff_file", default=None, type=click.Path(exists=True), help="Path to a patch/diff file")
@@ -40,6 +62,9 @@ def main(ref, diff_file, fuel, model, no_ai, fmt, output_file, verbose, repo):
     if verbose:
         click.echo(f"Found {len(file_changes)} changed files", err=True)
 
+    # Build per-file diff map for context
+    file_diffs = _extract_file_diffs(diff_text)
+
     # Step 3: Identify changed functions
     all_changed = []
     for fc in file_changes:
@@ -61,6 +86,7 @@ def main(ref, diff_file, fuel, model, no_ai, fmt, output_file, verbose, repo):
         ctx = resolve_context(
             cf.symbol, repo_dir=repo, change_type=cf.change_type, fuel=fuel,
         )
+        ctx.diff_text = file_diffs.get(cf.symbol.file_path, "")
         contexts.append(ctx)
         if verbose:
             click.echo(

@@ -34,6 +34,7 @@ class FunctionContext:
     callers: list[FunctionSymbol] = field(default_factory=list)
     callees: list[FunctionSymbol] = field(default_factory=list)
     change_type: str = "modified"
+    diff_text: str = ""  # raw diff for this file
 
 
 def _should_skip(path: str) -> bool:
