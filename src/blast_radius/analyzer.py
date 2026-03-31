@@ -135,35 +135,25 @@ def analyze(contexts: list[FunctionContext], model: str = "claude-sonnet-4-20250
 
 
 def _trim_reasoning(text: str) -> str:
-    """Strip reasoning steps, keep only verdict + report sections.
+    """Strip reasoning steps, keep only verdict + report.
 
-    Strategy: find "## Blast Radius Analysis" or "### Summary" and the
-    VERDICT line closest before it. Drop everything above.
+    Find last VERDICT line in the text, then find the ### Summary
+    after it. Everything from that VERDICT line onwards is the report.
     """
-    lines = text.splitlines()
+    import re
 
-    # Find the last occurrence of report headers
-    report_header = None
-    for i in range(len(lines) - 1, -1, -1):
-        stripped = lines[i].strip()
-        if stripped in ("## Blast Radius Analysis", "### Summary"):
-            report_header = i
-            break
-
-    if report_header is None:
-        # No report structure found, return as-is
-        return text
-
-    # Find the VERDICT line closest before the report header
-    verdict_line = report_header
-    for i in range(report_header - 1, -1, -1):
-        if "VERDICT:" in lines[i].upper():
-            verdict_line = i
-            break
-
-    # If there's significant content before the verdict, trim it
-    if verdict_line > 3:
-        return "\n".join(lines[verdict_line:])
+    # Strategy: split on the LAST "**VERDICT:" occurrence
+    # The model writes VERDICT in reasoning AND in the final report.
+    # We want the last one.
+    parts = re.split(r'(?=\*\*VERDICT:)', text, flags=re.IGNORECASE)
+    if len(parts) > 1:
+        # Take the last part that contains ### (the actual report)
+        for part in reversed(parts):
+            if "###" in part:
+                return "**VERDICT:" + part if not part.startswith("**VERDICT:") else part
+        # Fallback: just take the last part
+        last = parts[-1]
+        return "**VERDICT:" + last if not last.startswith("**VERDICT:") else last
 
     return text
 
