@@ -135,28 +135,35 @@ def analyze(contexts: list[FunctionContext], model: str = "claude-sonnet-4-20250
 
 
 def _trim_reasoning(text: str) -> str:
-    """Strip reasoning steps, keep only the final report.
+    """Strip reasoning steps, keep only verdict + report sections.
 
-    The model writes Step 1/2/3... before the report. Find the last
-    VERDICT line that's followed by ### Summary/Findings and keep from there.
+    Strategy: find "## Blast Radius Analysis" or "### Summary" and the
+    VERDICT line closest before it. Drop everything above.
     """
     lines = text.splitlines()
 
-    # Find the last VERDICT line that has ### Summary or ### Findings after it
-    # This is the real report verdict, not one mentioned in reasoning
-    best_start = 0
-    for i, line in enumerate(lines):
-        if "VERDICT:" in line.upper() and any(
-            v in line.upper() for v in ("FAIL", "WARNING", "PASS")
-        ):
-            # Check if ### Summary or ### Findings follows within 5 lines
-            for j in range(i + 1, min(i + 6, len(lines))):
-                if lines[j].strip().startswith("###"):
-                    best_start = i
-                    break
+    # Find the last occurrence of report headers
+    report_header = None
+    for i in range(len(lines) - 1, -1, -1):
+        stripped = lines[i].strip()
+        if stripped in ("## Blast Radius Analysis", "### Summary"):
+            report_header = i
+            break
 
-    if best_start > 0:
-        return "\n".join(lines[best_start:])
+    if report_header is None:
+        # No report structure found, return as-is
+        return text
+
+    # Find the VERDICT line closest before the report header
+    verdict_line = report_header
+    for i in range(report_header - 1, -1, -1):
+        if "VERDICT:" in lines[i].upper():
+            verdict_line = i
+            break
+
+    # If there's significant content before the verdict, trim it
+    if verdict_line > 3:
+        return "\n".join(lines[verdict_line:])
 
     return text
 
