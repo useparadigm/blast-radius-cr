@@ -132,21 +132,41 @@ def analyze(contexts: list[FunctionContext], model: str = "claude-sonnet-4-20250
 
     import anthropic
     client = anthropic.Anthropic(api_key=api_key)
+
+    # Use extended thinking on models that support it to keep reasoning internal
+    kwargs = {}
+    if "sonnet" not in model and "haiku" not in model:
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+        kwargs["max_tokens"] = 16000
+    else:
+        kwargs["max_tokens"] = 4096
+
+    messages = [{"role": "user", "content": prompt}]
+    # Prefill to force the model to start with verdict, not reasoning
+    if "thinking" not in kwargs:
+        messages.append({"role": "assistant", "content": "**VERDICT:"})
+
     response = client.messages.create(
         model=model,
-        max_tokens=16000,
-        thinking={
-            "type": "enabled",
-            "budget_tokens": 10000,
-        },
         system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
+        **kwargs,
     )
-    # With extended thinking, text blocks contain the visible output
+
+    # Extract text output (skip thinking blocks)
+    text = ""
     for block in response.content:
         if block.type == "text":
-            return block.text
-    return response.content[-1].text
+            text = block.text
+            break
+    if not text:
+        text = response.content[-1].text
+
+    # If we prefilled, prepend it
+    if "thinking" not in kwargs:
+        text = "**VERDICT:" + text
+
+    return text
 
 
 def parse_verdict(report: str) -> str:
