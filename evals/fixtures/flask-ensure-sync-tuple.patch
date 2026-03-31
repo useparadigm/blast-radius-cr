@@ -1,0 +1,29 @@
+diff --git a/src/flask/app.py b/src/flask/app.py
+index cc326db..86ec4b4 100644
+--- a/src/flask/app.py
++++ b/src/flask/app.py
+@@ -963,19 +963,21 @@ class Flask(App):
+         rv.allow.update(methods)
+         return rv
+ 
+-    def ensure_sync(self, func: t.Callable[..., t.Any]) -> t.Callable[..., t.Any]:
++    def ensure_sync(self, func: t.Callable[..., t.Any]) -> tuple[t.Callable[..., t.Any], bool]:
+         """Ensure that the function is synchronous for WSGI workers.
+         Plain ``def`` functions are returned as-is. ``async def``
+         functions are wrapped to run and wait for the response.
+ 
++        Returns a tuple of (sync_function, was_async).
++
+         Override this method to change how the app runs async views.
+ 
+         .. versionadded:: 2.0
+         """
+         if iscoroutinefunction(func):
+-            return self.async_to_sync(func)
++            return self.async_to_sync(func), True
+ 
+-        return func
++        return func, False
+ 
+     def async_to_sync(
+         self, func: t.Callable[..., t.Coroutine[t.Any, t.Any, t.Any]]

@@ -1,0 +1,22 @@
+diff --git a/src/flask/app.py b/src/flask/app.py
+index cc326db..25577c6 100644
+--- a/src/flask/app.py
++++ b/src/flask/app.py
+@@ -963,11 +963,16 @@ class Flask(App):
+         rv.allow.update(methods)
+         return rv
+ 
+-    def ensure_sync(self, func: t.Callable[..., t.Any]) -> t.Callable[..., t.Any]:
++    def ensure_sync(
++        self, func: t.Callable[..., t.Any], debug_name: str | None = None
++    ) -> t.Callable[..., t.Any]:
+         """Ensure that the function is synchronous for WSGI workers.
+         Plain ``def`` functions are returned as-is. ``async def``
+         functions are wrapped to run and wait for the response.
+ 
++        :param debug_name: Optional name for debug logging. Does not
++            affect behavior.
++
+         Override this method to change how the app runs async views.
+ 
+         .. versionadded:: 2.0

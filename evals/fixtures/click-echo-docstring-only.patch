@@ -1,0 +1,17 @@
+diff --git a/src/click/utils.py b/src/click/utils.py
+index d536434..29da095 100644
+--- a/src/click/utils.py
++++ b/src/click/utils.py
+@@ -223,8 +223,10 @@ def echo(
+     err: bool = False,
+     color: t.Optional[bool] = None,
+ ) -> None:
+-    """Print a message and newline to stdout or a file. This should be
+-    used instead of :func:`print` because it provides better support
++    """Print a message and newline to stdout or a file.
++
++    This is the primary output function for Click applications and should
++    be used instead of :func:`print` because it provides better support
+     for different data, files, and environments.
+ 
+     Compared to :func:`print`, this does the following:

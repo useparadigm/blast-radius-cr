@@ -1,0 +1,161 @@
+diff --git a/httpx/_client.py b/httpx/_client.py
+index f324b19459..2ed3f49285 100644
+--- a/httpx/_client.py
++++ b/httpx/_client.py
+@@ -168,6 +168,7 @@ def __init__(
+         ] = None,
+         base_url: URLTypes = "",
+         trust_env: bool = True,
++        default_encoding: typing.Union[str, typing.Callable[[bytes], str]] = "utf-8",
+     ):
+         event_hooks = {} if event_hooks is None else event_hooks
+ 
+@@ -185,6 +186,7 @@ def __init__(
+             "response": list(event_hooks.get("response", [])),
+         }
+         self._trust_env = trust_env
++        self._default_encoding = default_encoding
+         self._netrc = NetRCInfo()
+         self._state = ClientState.UNOPENED
+ 
+@@ -611,6 +613,9 @@ class Client(BaseClient):
+     rather than sending actual network requests.
+     * **trust_env** - *(optional)* Enables or disables usage of environment
+     variables for configuration.
++    * **default_encoding** - *(optional)* The default encoding to use for decoding
++    response text, if no charset information is included in a response Content-Type
++    header. Set to a callable for automatic character set detection. Default: "utf-8".
+     """
+ 
+     def __init__(
+@@ -637,6 +642,7 @@ def __init__(
+         transport: typing.Optional[BaseTransport] = None,
+         app: typing.Optional[typing.Callable] = None,
+         trust_env: bool = True,
++        default_encoding: typing.Union[str, typing.Callable[[bytes], str]] = "utf-8",
+     ):
+         super().__init__(
+             auth=auth,
+@@ -649,6 +655,7 @@ def __init__(
+             event_hooks=event_hooks,
+             base_url=base_url,
+             trust_env=trust_env,
++            default_encoding=default_encoding,
+         )
+ 
+         if http2:
+@@ -1002,6 +1009,7 @@ def _send_single_request(self, request: Request) -> Response:
+             response.stream, response=response, timer=timer
+         )
+         self.cookies.extract_cookies(response)
++        response.default_encoding = self._default_encoding
+ 
+         status = f"{response.status_code} {response.reason_phrase}"
+         response_line = f"{response.http_version} {status}"
+@@ -1326,6 +1334,9 @@ class AsyncClient(BaseClient):
+     rather than sending actual network requests.
+     * **trust_env** - *(optional)* Enables or disables usage of environment
+     variables for configuration.
++    * **default_encoding** - *(optional)* The default encoding to use for decoding
++    response text, if no charset information is included in a response Content-Type
++    header. Set to a callable for automatic character set detection. Default: "utf-8".
+     """
+ 
+     def __init__(
+@@ -1352,6 +1363,7 @@ def __init__(
+         transport: typing.Optional[AsyncBaseTransport] = None,
+         app: typing.Optional[typing.Callable] = None,
+         trust_env: bool = True,
++        default_encoding: str = "utf-8",
+     ):
+         super().__init__(
+             auth=auth,
+@@ -1364,6 +1376,7 @@ def __init__(
+             event_hooks=event_hooks,
+             base_url=base_url,
+             trust_env=trust_env,
++            default_encoding=default_encoding,
+         )
+ 
+         if http2:
+@@ -1708,6 +1721,7 @@ async def _send_single_request(self, request: Request) -> Response:
+             response.stream, response=response, timer=timer
+         )
+         self.cookies.extract_cookies(response)
++        response.default_encoding = self._default_encoding
+ 
+         status = f"{response.status_code} {response.reason_phrase}"
+         response_line = f"{response.http_version} {status}"
+diff --git a/httpx/_models.py b/httpx/_models.py
+index 4f82f01473..cff6929d9e 100644
+--- a/httpx/_models.py
++++ b/httpx/_models.py
+@@ -7,8 +7,6 @@
+ from collections.abc import MutableMapping
+ from http.cookiejar import Cookie, CookieJar
+ 
+-import charset_normalizer
+-
+ from ._content import ByteStream, UnattachedStream, encode_request, encode_response
+ from ._decoders import (
+     SUPPORTED_DECODERS,
+@@ -445,6 +443,7 @@ def __init__(
+         request: typing.Optional[Request] = None,
+         extensions: typing.Optional[dict] = None,
+         history: typing.Optional[typing.List["Response"]] = None,
++        default_encoding: typing.Union[str, typing.Callable[[bytes], str]] = "utf-8",
+     ):
+         self.status_code = status_code
+         self.headers = Headers(headers)
+@@ -461,6 +460,8 @@ def __init__(
+         self.is_closed = False
+         self.is_stream_consumed = False
+ 
++        self.default_encoding = default_encoding
++
+         if stream is None:
+             headers, stream = encode_response(content, text, html, json)
+             self._prepare(headers)
+@@ -569,14 +570,18 @@ def encoding(self) -> typing.Optional[str]:
+ 
+         * `.encoding = <>` has been set explicitly.
+         * The encoding as specified by the charset parameter in the Content-Type header.
+-        * The encoding as determined by `charset_normalizer`.
+-        * UTF-8.
++        * The encoding as determined by `default_encoding`, which may either be
++          a string like "utf-8" indicating the encoding to use, or may be a callable
++          which enables charset autodetection.
+         """
+         if not hasattr(self, "_encoding"):
+             encoding = self.charset_encoding
+             if encoding is None or not is_known_encoding(encoding):
+-                encoding = self.apparent_encoding
+-            self._encoding = encoding
++                if isinstance(self.default_encoding, str):
++                    encoding = self.default_encoding
++                elif hasattr(self, "_content"):
++                    encoding = self.default_encoding(self._content)
++            self._encoding = encoding or "utf-8"
+         return self._encoding
+ 
+     @encoding.setter
+@@ -598,19 +603,6 @@ def charset_encoding(self) -> typing.Optional[str]:
+ 
+         return params["charset"].strip("'\"")
+ 
+-    @property
+-    def apparent_encoding(self) -> typing.Optional[str]:
+-        """
+-        Return the encoding, as determined by `charset_normalizer`.
+-        """
+-        content = getattr(self, "_content", b"")
+-        if len(content) < 32:
+-            # charset_normalizer will issue warnings if we run it with
+-            # fewer bytes than this cutoff.
+-            return None
+-        match = charset_normalizer.from_bytes(self.content).best()
+-        return None if match is None else match.encoding
+-
+     def _get_content_decoder(self) -> ContentDecoder:
+         """
+         Returns a decoder instance which can be used to decode the raw byte

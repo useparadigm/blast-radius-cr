@@ -1,0 +1,64 @@
+name: Eval Pipeline
+on:
+  workflow_dispatch:
+    inputs:
+      case:
+        description: "Run specific case (leave empty for all)"
+        required: false
+        default: ""
+      model:
+        description: "LLM model for analysis"
+        required: false
+        default: "claude-sonnet-4-20250514"
+  schedule:
+    - cron: "0 6 * * 1"  # Weekly Monday 6am UTC
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install blast-radius + eval deps
+        run: |
+          pip install -e ".[dev]"
+          pip install pyyaml
+
+      - name: Run eval pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          cd evals
+          CASE_FLAG=""
+          if [ -n "${{ github.event.inputs.case }}" ]; then
+            CASE_FLAG="--case ${{ github.event.inputs.case }}"
+          fi
+          python run_evals.py \
+            --model "${{ github.event.inputs.model || 'claude-sonnet-4-20250514' }}" \
+            --output ../eval-results.json \
+            --report ../eval-report.md \
+            $CASE_FLAG
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: |
+            eval-results.json
+            eval-report.md
+
+      - name: Post summary
+        if: always()
+        run: |
+          if [ -f eval-report.md ]; then
+            cat eval-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi

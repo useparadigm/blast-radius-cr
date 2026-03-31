@@ -1,0 +1,152 @@
+diff --git a/src/click/__init__.py b/src/click/__init__.py
+index 87908779f2..33080c0a61 100644
+--- a/src/click/__init__.py
++++ b/src/click/__init__.py
+@@ -41,7 +41,6 @@
+ from .termui import confirm as confirm
+ from .termui import echo_via_pager as echo_via_pager
+ from .termui import edit as edit
+-from .termui import get_terminal_size as get_terminal_size
+ from .termui import getchar as getchar
+ from .termui import launch as launch
+ from .termui import pause as pause
+@@ -68,7 +67,6 @@
+ from .utils import format_filename as format_filename
+ from .utils import get_app_dir as get_app_dir
+ from .utils import get_binary_stream as get_binary_stream
+-from .utils import get_os_args as get_os_args
+ from .utils import get_text_stream as get_text_stream
+ from .utils import open_file as open_file
+ 
+diff --git a/src/click/core.py b/src/click/core.py
+index 5a4129c7df..ba6877b493 100644
+--- a/src/click/core.py
++++ b/src/click/core.py
+@@ -1568,17 +1568,6 @@ def function(__value, *args, **kwargs):  # type: ignore
+ 
+         return decorator
+ 
+-    def resultcallback(self, replace: bool = False) -> t.Callable[[F], F]:
+-        import warnings
+-
+-        warnings.warn(
+-            "'resultcallback' has been renamed to 'result_callback'."
+-            " The old name will be removed in Click 8.1.",
+-            DeprecationWarning,
+-            stacklevel=2,
+-        )
+-        return self.result_callback(replace=replace)
+-
+     def format_commands(self, ctx: Context, formatter: HelpFormatter) -> None:
+         """Extra format methods for multi methods that adds all the commands
+         after the options.
+@@ -2020,11 +2009,6 @@ def __init__(
+                 t.Union[t.List["CompletionItem"], t.List[str]],
+             ]
+         ] = None,
+-        autocompletion: t.Optional[
+-            t.Callable[
+-                [Context, t.List[str], str], t.List[t.Union[t.Tuple[str, str], str]]
+-            ]
+-        ] = None,
+     ) -> None:
+         self.name, self.opts, self.secondary_opts = self._parse_decls(
+             param_decls or (), expose_value
+@@ -2048,36 +2032,6 @@ def __init__(
+         self.is_eager = is_eager
+         self.metavar = metavar
+         self.envvar = envvar
+-
+-        if autocompletion is not None:
+-            import warnings
+-
+-            warnings.warn(
+-                "'autocompletion' is renamed to 'shell_complete'. The old name is"
+-                " deprecated and will be removed in Click 8.1. See the docs about"
+-                " 'Parameter' for information about new behavior.",
+-                DeprecationWarning,
+-                stacklevel=2,
+-            )
+-
+-            def shell_complete(
+-                ctx: Context, param: "Parameter", incomplete: str
+-            ) -> t.List["CompletionItem"]:
+-                from click.shell_completion import CompletionItem
+-
+-                out = []
+-
+-                for c in autocompletion(ctx, [], incomplete):  # type: ignore
+-                    if isinstance(c, tuple):
+-                        c = CompletionItem(c[0], help=c[1])
+-                    elif isinstance(c, str):
+-                        c = CompletionItem(c)
+-
+-                    if c.value.startswith(incomplete):
+-                        out.append(c)
+-
+-                return out
+-
+         self._custom_shell_complete = shell_complete
+ 
+         if __debug__:
+diff --git a/src/click/termui.py b/src/click/termui.py
+index cf8d5f132e..19dced0e77 100644
+--- a/src/click/termui.py
++++ b/src/click/termui.py
+@@ -252,26 +252,6 @@ def confirm(
+     return rv
+ 
+ 
+-def get_terminal_size() -> os.terminal_size:
+-    """Returns the current size of the terminal as tuple in the form
+-    ``(width, height)`` in columns and rows.
+-
+-    .. deprecated:: 8.0
+-        Will be removed in Click 8.1. Use
+-        :func:`shutil.get_terminal_size` instead.
+-    """
+-    import shutil
+-    import warnings
+-
+-    warnings.warn(
+-        "'click.get_terminal_size()' is deprecated and will be removed"
+-        " in Click 8.1. Use 'shutil.get_terminal_size()' instead.",
+-        DeprecationWarning,
+-        stacklevel=2,
+-    )
+-    return shutil.get_terminal_size()
+-
+-
+ def echo_via_pager(
+     text_or_generator: t.Union[t.Iterable[str], t.Callable[[], t.Iterable[str]], str],
+     color: t.Optional[bool] = None,
+diff --git a/src/click/utils.py b/src/click/utils.py
+index 051cf70093..03fbaa7ae4 100644
+--- a/src/click/utils.py
++++ b/src/click/utils.py
+@@ -379,25 +379,6 @@ def open_file(
+     return f
+ 
+ 
+-def get_os_args() -> t.Sequence[str]:
+-    """Returns the argument part of ``sys.argv``, removing the first
+-    value which is the name of the script.
+-
+-    .. deprecated:: 8.0
+-        Will be removed in Click 8.1. Access ``sys.argv[1:]`` directly
+-        instead.
+-    """
+-    import warnings
+-
+-    warnings.warn(
+-        "'get_os_args' is deprecated and will be removed in Click 8.1."
+-        " Access 'sys.argv[1:]' directly instead.",
+-        DeprecationWarning,
+-        stacklevel=2,
+-    )
+-    return sys.argv[1:]
+-
+-
+ def format_filename(
+     filename: t.Union[str, bytes, os.PathLike], shorten: bool = False
+ ) -> str:

@@ -1,0 +1,13 @@
+diff --git a/src/marshmallow/fields.py b/src/marshmallow/fields.py
+index d258b97..f90237e 100644
+--- a/src/marshmallow/fields.py
++++ b/src/marshmallow/fields.py
+@@ -285,7 +285,7 @@ class Field(FieldABC):
+             raise AssertionError(message) from error
+         if isinstance(msg, (str, bytes)):
+             msg = msg.format(**kwargs)
+-        return ValidationError(msg)
++        return str(msg)
+ 
+     def fail(self, key: str, **kwargs):
+         """Helper method that raises a `ValidationError` with an error message

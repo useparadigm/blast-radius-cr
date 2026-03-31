@@ -1,0 +1,117 @@
+diff --git a/src/attr/_make.py b/src/attr/_make.py
+index 7f22b273b..990786954 100644
+--- a/src/attr/_make.py
++++ b/src/attr/_make.py
+@@ -59,6 +59,8 @@
+ # Unique object for unequivocal getattr() defaults.
+ _sentinel = object()
+ 
++_ng_default_on_setattr = setters.pipe(setters.convert, setters.validate)
++
+ 
+ class _Nothing(object):
+     """
+@@ -722,13 +724,31 @@ def __init__(
+             self._cls_dict["__delattr__"] = _frozen_delattrs
+ 
+             self._wrote_own_setattr = True
+-        elif on_setattr == setters.validate:
++        elif on_setattr in (
++            _ng_default_on_setattr,
++            setters.validate,
++            setters.convert,
++        ):
++            has_validator = has_converter = False
+             for a in attrs:
+                 if a.validator is not None:
++                    has_validator = True
++                if a.converter is not None:
++                    has_converter = True
++
++                if has_validator and has_converter:
+                     break
+-            else:
+-                # If class-level on_setattr is set to validating, but there's
+-                # no field to validate, pretend like there's no on_setattr.
++            if (
++                (
++                    on_setattr == _ng_default_on_setattr
++                    and not (has_validator or has_converter)
++                )
++                or (on_setattr == setters.validate and not has_validator)
++                or (on_setattr == setters.convert and not has_converter)
++            ):
++                # If class-level on_setattr is set to convert + validate, but
++                # there's no field to convert or validate, pretend like there's
++                # no on_setattr.
+                 self._on_setattr = None
+ 
+         if getstate_setstate:
+@@ -2123,9 +2143,7 @@ def _make_init(
+                 raise ValueError("Frozen classes can't use on_setattr.")
+ 
+             needs_cached_setattr = True
+-        elif (
+-            has_cls_on_setattr and a.on_setattr is not setters.NO_OP
+-        ) or _is_slot_attr(a.name, base_attr_map):
++        elif has_cls_on_setattr and a.on_setattr is not setters.NO_OP:
+             needs_cached_setattr = True
+ 
+     unique_filename = _generate_unique_filename(cls, "init")
+diff --git a/src/attr/_next_gen.py b/src/attr/_next_gen.py
+index 1d8acac36..843447173 100644
+--- a/src/attr/_next_gen.py
++++ b/src/attr/_next_gen.py
+@@ -8,7 +8,13 @@
+ from attr.exceptions import UnannotatedAttributeError
+ 
+ from . import setters
+-from ._make import NOTHING, _frozen_setattrs, attrib, attrs
++from ._make import (
++    NOTHING,
++    _frozen_setattrs,
++    _ng_default_on_setattr,
++    attrib,
++    attrs,
++)
+ 
+ 
+ def define(
+@@ -35,8 +41,10 @@ def define(
+     match_args=True,
+ ):
+     r"""
+-    The only behavioral differences are the handling of the *auto_attribs*
+-    option:
++    Define an ``attrs`` class.
++
++    The behavioral differences to `attr.s` are the handling of the
++    *auto_attribs* option:
+ 
+     :param Optional[bool] auto_attribs: If set to `True` or `False`, it behaves
+        exactly like `attr.s`. If left `None`, `attr.s` will try to guess:
+@@ -46,9 +54,11 @@ def define(
+        2. Otherwise it assumes *auto_attribs=False* and tries to collect
+           `attr.ib`\ s.
+ 
+-    and that mutable classes (``frozen=False``) validate on ``__setattr__``.
++    and that mutable classes (``frozen=False``) convert and validate on
++    ``__setattr__``.
+ 
+     .. versionadded:: 20.1.0
++    .. versionchanged:: 21.3.0 Converters are also run ``on_setattr``.
+     """
+ 
+     def do_it(cls, auto_attribs):
+@@ -86,9 +96,9 @@ def wrap(cls):
+ 
+         had_on_setattr = on_setattr not in (None, setters.NO_OP)
+ 
+-        # By default, mutable classes validate on setattr.
++        # By default, mutable classes convert & validate on setattr.
+         if frozen is False and on_setattr is None:
+-            on_setattr = setters.validate
++            on_setattr = _ng_default_on_setattr
+ 
+         # However, if we subclass a frozen class, we inherit the immutability
+         # and disable on_setattr.

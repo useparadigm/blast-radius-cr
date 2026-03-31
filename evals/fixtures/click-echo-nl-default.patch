@@ -1,0 +1,13 @@
+diff --git a/src/click/utils.py b/src/click/utils.py
+index d536434..dee2605 100644
+--- a/src/click/utils.py
++++ b/src/click/utils.py
+@@ -219,7 +219,7 @@ class KeepOpenFile:
+ def echo(
+     message: t.Optional[t.Any] = None,
+     file: t.Optional[t.IO[t.Any]] = None,
+-    nl: bool = True,
++    nl: bool = False,
+     err: bool = False,
+     color: t.Optional[bool] = None,
+ ) -> None:

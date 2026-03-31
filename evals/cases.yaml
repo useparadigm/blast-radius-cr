@@ -1,0 +1,281 @@
+# Blast Radius Eval Cases
+#
+# Each case injects a synthetic breaking change into a real open-source Python repo
+# at a pinned commit. The runner clones the repo, applies the patch, runs blast-radius,
+# and an LLM judge evaluates whether the expected findings were caught.
+#
+# Breaking change patterns covered (expected FAIL):
+#   1. Default parameter value change (silent behavioral breakage)
+#   2. New exception path (crash on previously valid input)
+#   3. New required parameter (signature breakage)
+#   4. Return type change: exception → string (TypeError on raise)
+#   5. Return type change: callable → tuple (TypeError on call)
+#
+# Safe change patterns covered (expected PASS):
+#   6. Docstring-only change (zero code change)
+#   7. Performance optimization (same semantics, faster path)
+#   8. New optional parameter with safe default (backward compatible)
+
+cases:
+
+  - id: click-echo-nl-default
+    description: >
+      click.echo() nl parameter default changed from True to False.
+      13+ internal callers that don't pass nl= explicitly now produce output
+      without trailing newline. Error messages, completion output, and prompts
+      all break silently.
+    repo: pallets/click
+    base_ref: "874ca2bc1c30d93a4ac6e36a15ed685eafe89097"
+    patch_file: fixtures/click-echo-nl-default.patch
+    expected_verdict: FAIL
+    changed_function: echo
+    changed_file: src/click/utils.py
+    breaking_pattern: default_value_change
+    known_callers:
+      - src/click/termui.py
+      - src/click/exceptions.py
+      - src/click/shell_completion.py
+    judge_criteria:
+      - "The output identifies that the nl parameter default changed from True to False"
+      - "The output mentions callers in termui.py or exceptions.py that call echo() without explicit nl argument"
+      - "The output classifies this as a breaking or cautionary change (not safe/pass)"
+
+  - id: rich-cell-len-raises
+    description: >
+      rich.cell_len() now raises ValueError on empty string input.
+      30+ callers across text.py, segment.py, rule.py, pretty.py, panel.py,
+      containers.py, console.py, and _wrap.py may pass empty strings and crash.
+    repo: Textualize/rich
+    base_ref: "fd981823644ccf50d685ac9c0cfe8e1e56c9dd35"
+    patch_file: fixtures/rich-cell-len-raises.patch
+    expected_verdict: FAIL
+    changed_function: cell_len
+    changed_file: rich/cells.py
+    breaking_pattern: new_exception_path
+    known_callers:
+      - rich/text.py
+      - rich/segment.py
+      - rich/rule.py
+      - rich/pretty.py
+      - rich/panel.py
+      - rich/containers.py
+      - rich/console.py
+      - rich/_wrap.py
+    judge_criteria:
+      - "The output identifies that cell_len now raises ValueError on empty string"
+      - "The output mentions callers that could pass empty strings (e.g. segment.py, text.py, rule.py)"
+      - "The output classifies this as a breaking change"
+
+  - id: requests-merge-setting-signature
+    description: >
+      requests.merge_setting() gains a new required parameter 'strategy' without
+      a default value. All 8 internal callers in sessions.py pass only 2 positional
+      args and will get TypeError.
+    repo: psf/requests
+    base_ref: "147c8511ddbfa5e8f71bbf5c18ede0c4ceb3bba4"
+    patch_file: fixtures/requests-merge-setting-signature.patch
+    expected_verdict: FAIL
+    changed_function: merge_setting
+    changed_file: requests/sessions.py
+    breaking_pattern: new_required_parameter
+    known_callers:
+      - requests/sessions.py
+    judge_criteria:
+      - "The output identifies that a new required parameter 'strategy' was added"
+      - "The output mentions that existing callers don't pass the strategy argument"
+      - "The output classifies this as a breaking change (TypeError)"
+
+  - id: marshmallow-make-error-return
+    description: >
+      marshmallow Field.make_error() now returns str instead of ValidationError.
+      30+ callers all do 'raise self.make_error(...)' — raising a string instead
+      of an exception causes TypeError at every validation failure site.
+    repo: marshmallow-code/marshmallow
+    base_ref: "dda9a8014dfe1bcb35e21307cfd5a8e19615a284"
+    patch_file: fixtures/marshmallow-make-error-return.patch
+    expected_verdict: FAIL
+    changed_function: make_error
+    changed_file: src/marshmallow/fields.py
+    breaking_pattern: return_type_change
+    known_callers:
+      - src/marshmallow/fields.py
+    judge_criteria:
+      - "The output identifies that make_error now returns str instead of ValidationError"
+      - "The output mentions callers that use 'raise self.make_error(...)' which will now fail"
+      - "The output classifies this as a breaking change (TypeError on raise)"
+
+  - id: flask-ensure-sync-tuple
+    description: >
+      flask.Flask.ensure_sync() now returns a (func, was_async) tuple instead
+      of just the callable. All 14+ callers do 'self.ensure_sync(func)(args)'
+      — calling a tuple raises TypeError, crashing every view dispatch,
+      error handler, context processor, and teardown function.
+    repo: pallets/flask
+    base_ref: "22d924701a6ae2e4cd01e9a15bbaf3946094af65"
+    patch_file: fixtures/flask-ensure-sync-tuple.patch
+    expected_verdict: FAIL
+    changed_function: ensure_sync
+    changed_file: src/flask/app.py
+    breaking_pattern: return_type_change
+    known_callers:
+      - src/flask/views.py
+      - src/flask/ctx.py
+      - src/flask/app.py
+    judge_criteria:
+      - "The output identifies that ensure_sync now returns a tuple instead of a callable"
+      - "The output mentions callers that immediately call the result (e.g. ensure_sync(handler)(e))"
+      - "The output classifies this as a breaking change (TypeError when calling a tuple)"
+
+  # --- REAL PR cases: actual breaking changes from real open-source PRs ---
+
+  - id: real-httpx-2165-charset-default
+    description: >
+      Real PR encode/httpx#2165. Default charset handling changed from
+      charset_normalizer auto-detection to utf-8. Response.text now returns
+      garbled text for non-UTF-8 content instead of auto-detecting encoding.
+      Response.apparent_encoding property removed entirely. 9 functions changed
+      across _client.py and _models.py.
+    repo: encode/httpx
+    base_ref: "940d61b239d0f387405f56005b13ad5aed3216b0"
+    patch_file: fixtures/real-httpx-2165-charset-default.patch
+    expected_verdict: FAIL
+    changed_function: encoding
+    changed_file: httpx/_models.py
+    breaking_pattern: behavioral_change_real_pr
+    known_callers:
+      - httpx/_client.py
+      - httpx/_models.py
+    judge_criteria:
+      - "The output identifies that charset auto-detection was replaced with utf-8 default"
+      - "The output mentions that Response.text behavior changed for non-UTF-8 content"
+      - "The output flags this as a breaking or cautionary change"
+
+  - id: real-attrs-886-converter-setattr
+    description: >
+      Real PR python-attrs/attrs#886. The define() decorator now runs converters
+      on __setattr__ by default (not just validators). Default changed from
+      setters.validate to setters.pipe(setters.convert, setters.validate).
+      The maintainer called this "unfortunately a breaking change" — existing
+      classes using @define with converters now have different setattr behavior.
+    repo: python-attrs/attrs
+    base_ref: "8ae0bd904d6147ce37750fa7ec336f951c14495c"
+    patch_file: fixtures/real-attrs-886-converter-setattr.patch
+    expected_verdict: WARNING
+    changed_function: define
+    changed_file: src/attr/_next_gen.py
+    breaking_pattern: default_behavior_change_real_pr
+    known_callers:
+      - src/attr/_make.py
+      - src/attr/_next_gen.py
+    judge_criteria:
+      - "The output identifies that converters now run on setattr by default"
+      - "The output mentions that the on_setattr default changed from validate-only to convert+validate"
+      - "The output flags this as a behavioral change affecting existing @define classes"
+
+  - id: real-attrs-1264-evolve-inst
+    description: >
+      Real PR python-attrs/attrs#1264. The evolve() function no longer accepts
+      'inst' as a keyword argument — it must be passed positionally. Any caller
+      doing evolve(inst=my_obj, field=value) now gets TypeError. The deprecation
+      warning was issued since v22.x, now hard-removed.
+    repo: python-attrs/attrs
+    base_ref: "09e35d448ef99f55b516f1440b4548c64fb2e6cf"
+    patch_file: fixtures/real-attrs-1264-evolve-inst.patch
+    expected_verdict: FAIL
+    changed_function: evolve
+    changed_file: src/attr/_funcs.py
+    breaking_pattern: parameter_removal_real_pr
+    known_callers:
+      - src/attr/_funcs.py
+    judge_criteria:
+      - "The output identifies that evolve() no longer accepts inst as keyword argument"
+      - "The output mentions that callers using evolve(inst=...) will get TypeError"
+      - "The output classifies this as a breaking change"
+
+  - id: real-click-2130-remove-deprecated
+    description: >
+      Real PR pallets/click#2130. Four deprecated APIs hard-removed in one PR:
+      Group.resultcallback() (use result_callback), get_terminal_size()
+      (use shutil.get_terminal_size), get_os_args() (use sys.argv[1:]),
+      and the autocompletion parameter from Command.__init__(). Any code using
+      these APIs now crashes with AttributeError or TypeError.
+    repo: pallets/click
+    base_ref: "4b4e2bdab832c1e970b9acc1cd2ead101d6e0308"
+    patch_file: fixtures/real-click-2130-remove-deprecated.patch
+    expected_verdict: FAIL
+    changed_function: resultcallback
+    changed_file: src/click/core.py
+    breaking_pattern: api_removal_real_pr
+    known_callers:
+      - src/click/__init__.py
+      - src/click/core.py
+    judge_criteria:
+      - "The output identifies that deprecated functions were removed (resultcallback, get_terminal_size, get_os_args)"
+      - "The output mentions the autocompletion parameter removal from Command"
+      - "The output classifies at least some removals as breaking"
+
+  # --- PASS cases: safe changes that should NOT be flagged as breaking ---
+
+  - id: click-echo-docstring-only
+    description: >
+      Only the docstring of click.echo() is reformatted. No code changes at all.
+      The function signature, body, and return value are completely untouched.
+      This should be a clear PASS — zero blast radius.
+    repo: pallets/click
+    base_ref: "874ca2bc1c30d93a4ac6e36a15ed685eafe89097"
+    patch_file: fixtures/click-echo-docstring-only.patch
+    expected_verdict: PASS
+    changed_function: echo
+    changed_file: src/click/utils.py
+    breaking_pattern: docstring_only
+    known_callers:
+      - src/click/termui.py
+      - src/click/exceptions.py
+    judge_criteria:
+      - "The output does NOT classify this as a breaking change"
+      - "The verdict is PASS (not FAIL or WARNING)"
+      - "The output recognizes this is a documentation-only change with no behavioral impact"
+
+  - id: rich-cell-len-ascii-fastpath
+    description: >
+      A performance optimization is added to rich.cell_len(): an early return
+      for ASCII-only text (text.isascii() → return len(text)). For ASCII text,
+      cell width equals character count, so this is semantically identical.
+      All 23+ callers get the same return values, just faster for ASCII input.
+    repo: Textualize/rich
+    base_ref: "fd981823644ccf50d685ac9c0cfe8e1e56c9dd35"
+    patch_file: fixtures/rich-cell-len-ascii-fastpath.patch
+    expected_verdict: PASS
+    changed_function: cell_len
+    changed_file: rich/cells.py
+    breaking_pattern: performance_optimization
+    known_callers:
+      - rich/text.py
+      - rich/segment.py
+      - rich/rule.py
+    judge_criteria:
+      - "The output does NOT classify this as a breaking change"
+      - "The verdict is PASS or at most WARNING"
+      - "The output recognizes the ASCII fast-path returns identical values to the existing code"
+
+  - id: flask-ensure-sync-optional-param
+    description: >
+      flask.Flask.ensure_sync() gains a new optional parameter 'debug_name'
+      with default None. The parameter is not used in the function body —
+      it's purely for future debug logging. All existing callers continue
+      to work unchanged because the default is None.
+    repo: pallets/flask
+    base_ref: "22d924701a6ae2e4cd01e9a15bbaf3946094af65"
+    patch_file: fixtures/flask-ensure-sync-optional-param.patch
+    expected_verdict: PASS
+    changed_function: ensure_sync
+    changed_file: src/flask/app.py
+    breaking_pattern: optional_parameter_addition
+    known_callers:
+      - src/flask/views.py
+      - src/flask/ctx.py
+      - src/flask/app.py
+    judge_criteria:
+      - "The output does NOT classify this as a breaking change"
+      - "The verdict is PASS or at most WARNING"
+      - "The output recognizes the new parameter has a safe default and doesn't affect existing callers"
