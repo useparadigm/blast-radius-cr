@@ -8,23 +8,14 @@ from .resolver import FunctionContext
 
 
 SYSTEM_PROMPT = """\
-You are a blast radius analyzer for pull requests. You find how code changes break callers.
-
-IMPORTANT RULES:
-- A new default parameter that changes the return value for existing callers IS breaking
-- Assume every change is guilty until proven innocent
-- Your output goes directly on a GitHub PR as a comment — be concise and scannable
-- Output ONLY the report format shown. No preamble, no analysis steps, no "let me think"
-- Start your response with the verdict line, nothing else before it"""
+You are a blast radius analyzer. Output goes on a GitHub PR comment — be short and scannable.
+A new default parameter that changes return values for existing callers IS breaking.
+Never write analysis steps. Only output the final report."""
 
 ANALYSIS_PROMPT = """\
 {context}
 
 ---
-
-Analyze the blast radius. Check: return value changes, signature changes, side effects, and per-caller impact.
-
-Output this exact format and nothing else:
 
 **VERDICT: FAIL** (or WARNING or PASS)
 
@@ -33,23 +24,19 @@ Output this exact format and nothing else:
 
 ### Findings
 
-For safe changes, one line:
-✅ function_name — no caller impact (reason)
+✅ function — safe (reason)
 
-For warnings:
 ⚠️ **function → caller** | what changed
-> Impact: ...
-> Check: ...
+> Impact: ... / Check: ...
 
-For breaking changes:
 🔴 **function → caller(s)** | what changed
-> Why: how this breaks callers
-> Evidence: quote the line
-> Fix: what to do
+> Why: ... / Evidence: ... / Fix: ...
 
 ### Action items
-🚫 [BLOCK] action (only for FAIL)
-⚠️ [TODO] action (only for WARNING)"""
+🚫 [BLOCK] ... / ⚠️ [TODO] ...
+
+---
+Fill in the template above. Only include relevant severity levels. No preamble."""
 
 
 def build_prompt(contexts: list[FunctionContext]) -> str:
@@ -150,43 +137,26 @@ def analyze(contexts: list[FunctionContext], model: str = "claude-sonnet-4-20250
 def _trim_reasoning(text: str) -> str:
     """Strip reasoning steps, keep only the final report.
 
-    The model often outputs Step 1/2/3... analysis before the actual report.
-    We find the verdict line and the report structure, and drop everything else.
+    The model writes Step 1/2/3... before the report. Find the last
+    VERDICT line that's followed by ### Summary/Findings and keep from there.
     """
     lines = text.splitlines()
 
-    # Find the VERDICT line
-    verdict_idx = None
+    # Find the last VERDICT line that has ### Summary or ### Findings after it
+    # This is the real report verdict, not one mentioned in reasoning
+    best_start = 0
     for i, line in enumerate(lines):
-        if "VERDICT:" in line.upper() and ("FAIL" in line.upper() or "WARNING" in line.upper() or "PASS" in line.upper()):
-            verdict_idx = i
-            # Take the LAST verdict line (the one in the actual report, not reasoning)
-            # But if the first line is the verdict (from prefill), use that
-
-    if verdict_idx is None:
-        return text
-
-    # Find where the actual report starts: verdict followed by ### Summary or ### Findings
-    report_start = verdict_idx
-    for i in range(verdict_idx, len(lines)):
-        if lines[i].strip().startswith("### Summary") or lines[i].strip().startswith("### Findings"):
-            # Report starts at the verdict line before this
-            for j in range(i - 1, -1, -1):
-                if "VERDICT:" in lines[j].upper():
-                    report_start = j
+        if "VERDICT:" in line.upper() and any(
+            v in line.upper() for v in ("FAIL", "WARNING", "PASS")
+        ):
+            # Check if ### Summary or ### Findings follows within 5 lines
+            for j in range(i + 1, min(i + 6, len(lines))):
+                if lines[j].strip().startswith("###"):
+                    best_start = i
                     break
-            break
 
-    # Check if there's reasoning before the report (Steps, analysis, etc.)
-    has_reasoning = False
-    for i in range(report_start):
-        line = lines[i].strip()
-        if line.startswith("## Step") or line.startswith("**Step") or line.startswith("I'll analyze") or line.startswith("Let me"):
-            has_reasoning = True
-            break
-
-    if has_reasoning:
-        return "\n".join(lines[report_start:])
+    if best_start > 0:
+        return "\n".join(lines[best_start:])
 
     return text
 
