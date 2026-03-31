@@ -131,31 +131,33 @@ def analyze(contexts: list[FunctionContext], model: str = "claude-sonnet-4-20250
     if "thinking" not in kwargs:
         text = "**VERDICT:" + text
 
-    return _trim_reasoning(text)
+    return _compress_report(text, api_key)
 
 
-def _trim_reasoning(text: str) -> str:
-    """Strip reasoning steps, keep only verdict + report.
+def _compress_report(text: str, api_key: str) -> str:
+    """Use a fast model to compress verbose LLM output into a clean PR comment."""
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=2000,
+        messages=[{
+            "role": "user",
+            "content": f"""Rewrite this blast radius analysis as a short, scannable PR comment.
 
-    Find last VERDICT line in the text, then find the ### Summary
-    after it. Everything from that VERDICT line onwards is the report.
-    """
-    import re
+Rules:
+- Keep the VERDICT line exactly as-is
+- Summary: 1-2 sentences max
+- Findings: use the emoji format (🔴/⚠️/✅), 2-3 lines per finding max
+- Action items: one line each
+- Remove ALL reasoning steps, analysis walkthrough, code examples
+- Total output under 40 lines
 
-    # Strategy: split on the LAST "**VERDICT:" occurrence
-    # The model writes VERDICT in reasoning AND in the final report.
-    # We want the last one.
-    parts = re.split(r'(?=\*\*VERDICT:)', text, flags=re.IGNORECASE)
-    if len(parts) > 1:
-        # Take the last part that contains ### (the actual report)
-        for part in reversed(parts):
-            if "###" in part:
-                return "**VERDICT:" + part if not part.startswith("**VERDICT:") else part
-        # Fallback: just take the last part
-        last = parts[-1]
-        return "**VERDICT:" + last if not last.startswith("**VERDICT:") else last
-
-    return text
+Input:
+{text}""",
+        }],
+    )
+    return response.content[0].text
 
 
 def parse_verdict(report: str) -> str:
