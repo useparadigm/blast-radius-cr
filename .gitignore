@@ -7,3 +7,6 @@ build/
 .venv/
 .pytest_cache/
 .eggs/
+.env
+blast-radius-*.md
+uv.lock
