@@ -8,70 +8,48 @@ from .resolver import FunctionContext
 
 
 SYSTEM_PROMPT = """\
-You are a code reviewer performing blast radius analysis on pull requests.
-Your job is to find how code changes affect callers and callees.
-Assume every change is guilty until proven innocent.
+You are a blast radius analyzer for pull requests. You find how code changes break callers.
 
-Output rules:
-- Be concise. Developers will read this on a PR — respect their time.
-- PASS findings: one line each, no explanation needed.
-- WARNING findings: 2-3 lines — what changed, who's affected, what to check.
-- FAIL findings: full detail — mechanism, evidence, action. These block merges.
-- Skip boilerplate. No "let me analyze...", no restating the code. Go straight to findings."""
+IMPORTANT RULES:
+- A new default parameter that changes the return value for existing callers IS breaking
+- Assume every change is guilty until proven innocent
+- Your output goes directly on a GitHub PR as a comment — be concise and scannable
+- Output ONLY the report format shown. No preamble, no analysis steps, no "let me think"
+- Start your response with the verdict line, nothing else before it"""
 
 ANALYSIS_PROMPT = """\
-Analyze the blast radius of the following code changes.
-
 {context}
 
 ---
 
-Think through this checklist internally (do NOT write it out):
-1. What exactly changed? Old behavior vs new behavior.
-2. Return values: did any return value/type change for existing callers? A new default param that changes the return value IS breaking.
-3. Signatures: do existing callers still pass correct args?
-4. Side effects: DB, API, exceptions, performance changes?
-5. Per caller: will it break or behave differently? Quote the specific line.
+Analyze the blast radius. Check: return value changes, signature changes, side effects, and per-caller impact.
 
-Then output ONLY the report below. No reasoning steps, no checklist — just the report.
+Output this exact format and nothing else:
 
----
-
-Start with exactly one verdict line:
-
-**VERDICT: FAIL** — if any BREAKING findings
-**VERDICT: WARNING** — if CAUTION findings but no BREAKING
-**VERDICT: PASS** — if all safe
-
-Then:
+**VERDICT: FAIL** (or WARNING or PASS)
 
 ### Summary
-1-2 sentences: what changed and risk level.
+1-2 sentences.
 
 ### Findings
 
-PASS — list safe changes in one line each, or omit if nothing interesting.
+For safe changes, one line:
+✅ function_name — no caller impact (reason)
 
-For WARNING findings:
-```
-⚠️ CAUTION | function → affected | what changed
-  Impact: who's affected and how
-  Check: what to verify before merging
-```
+For warnings:
+⚠️ **function → caller** | what changed
+> Impact: ...
+> Check: ...
 
-For FAIL findings:
-```
-🔴 BREAKING | function → affected caller(s) | what changed
-  Why: HOW this breaks the caller — be specific
-  Evidence: the exact line in the caller that breaks
-  Fix: what to do
-```
+For breaking changes:
+🔴 **function → caller(s)** | what changed
+> Why: how this breaks callers
+> Evidence: quote the line
+> Fix: what to do
 
 ### Action items
-Only if there are WARNING or FAIL findings. One line each:
-- 🚫 [BLOCK] — must fix before merge
-- ⚠️ [TODO] — fix before or after merge
-"""
+🚫 [BLOCK] action (only for FAIL)
+⚠️ [TODO] action (only for WARNING)"""
 
 
 def build_prompt(contexts: list[FunctionContext]) -> str:
