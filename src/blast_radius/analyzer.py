@@ -140,24 +140,19 @@ def _compress_report(text: str, api_key: str) -> str:
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
-        messages=[{
-            "role": "user",
-            "content": f"""Rewrite this blast radius analysis as a short, scannable PR comment.
-
-Rules:
-- Keep the VERDICT line exactly as-is
-- Summary: 1-2 sentences max
-- Findings: use the emoji format (🔴/⚠️/✅), 2-3 lines per finding max
-- Action items: one line each
-- Remove ALL reasoning steps, analysis walkthrough, code examples
-- Total output under 40 lines
-
-Input:
-{text}""",
-        }],
+        max_tokens=800,
+        messages=[
+            {
+                "role": "user",
+                "content": f"Compress this code review into under 20 lines. Keep verdict line, summary (1 sentence), findings (emoji + 1 line each), action items (1 line each). Remove all steps, reasoning, code blocks, explanations.\n\n{text}",
+            },
+            {
+                "role": "assistant",
+                "content": "**VERDICT:",
+            },
+        ],
     )
-    return response.content[0].text
+    return "**VERDICT:" + response.content[0].text
 
 
 def parse_verdict(report: str) -> str:
