@@ -311,6 +311,30 @@ def resolve_blast_radius(
 # Step 6: Context assembly
 # ---------------------------------------------------------------------------
 
+def extract_call_site(caller: FunctionInfo, callee_name: str, context_lines: int = 5) -> str:
+    """Extract the lines around where caller invokes callee_name."""
+    uq = unqualified_name(callee_name)
+    source_lines = caller.source.splitlines()
+    sites = []
+    for i, line in enumerate(source_lines):
+        if uq in line:
+            start = max(0, i - context_lines)
+            end = min(len(source_lines), i + context_lines + 1)
+            snippet = source_lines[start:end]
+            # Add line numbers relative to the function
+            numbered = []
+            for j, s in enumerate(snippet, start=caller.start_line + start):
+                marker = ">>>" if (j - caller.start_line) == i else "   "
+                numbered.append(f"{marker} {j}: {s}")
+            sites.append("\n".join(numbered))
+    if sites:
+        return "\n---\n".join(sites)
+    # Fallback: show truncated source
+    if len(source_lines) > 30:
+        return "\n".join(source_lines[:30]) + "\n# ... truncated"
+    return caller.source
+
+
 def assemble_context(blast_radius: list[ChangedFunction], diff_text: str) -> str:
     """Build the context string for the LLM."""
     parts = []
@@ -323,21 +347,20 @@ def assemble_context(blast_radius: list[ChangedFunction], diff_text: str) -> str
 
         if cf.callees:
             parts.append("### Callees (functions this calls):")
-            for callee in cf.callees[:10]:  # cap at 10
+            for callee in cf.callees[:10]:
                 parts.append(f"#### `{callee.name}` ({callee.file_path}:{callee.start_line}-{callee.end_line})")
                 source = callee.source
-                if source.count("\n") > 100:
-                    source = "\n".join(source.splitlines()[:100]) + "\n# ... truncated"
+                if source.count("\n") > 50:
+                    source = "\n".join(source.splitlines()[:50]) + "\n# ... truncated"
                 parts.append(f"```python\n{source}\n```\n")
 
         if cf.callers:
             parts.append("### Callers (functions that call this):")
-            for caller in cf.callers[:10]:  # cap at 10
+            for caller in cf.callers[:15]:
+                call_site = extract_call_site(caller, cf.info.name)
                 parts.append(f"#### `{caller.name}` ({caller.file_path}:{caller.start_line}-{caller.end_line})")
-                source = caller.source
-                if source.count("\n") > 100:
-                    source = "\n".join(source.splitlines()[:100]) + "\n# ... truncated"
-                parts.append(f"```python\n{source}\n```\n")
+                parts.append(f"Call site context:")
+                parts.append(f"```python\n{call_site}\n```\n")
 
     context = "\n\n".join(parts)
 
@@ -354,19 +377,32 @@ def assemble_context(blast_radius: list[ChangedFunction], diff_text: str) -> str
 # Step 7: LLM analysis
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are a senior software engineer reviewing a pull request.
+SYSTEM_PROMPT = """You are reviewing a pull request. The reviewer has already read the diff — do NOT restate what changed.
 
-You are given:
-1. The PR diff
-2. For each changed function: its source code, the functions it calls (callees), and the functions that call it (callers)
+You are given the diff, each changed function, and the source of every function that calls it (callers) or is called by it (callees). Your job is to read each caller/callee and give a concrete verdict.
 
-Analyze what could break. Be specific about:
-- Behavioral changes that callers might not expect
-- Callees whose contracts the changed code might now violate
-- Edge cases or regressions introduced by the changes
-- Any callers that may need to be updated
+For each changed function, output:
 
-Be concise and actionable. Focus on real risks, not hypotheticals."""
+### `function_name` (file:line)
+
+**What changed:** one sentence max.
+
+**Caller verdicts:**
+
+For each caller, one line:
+- `safe` / `needs review` / `likely breaks` — `CallerName` (file:line) — reason
+
+Be specific: "passes user input that may contain meaningful leading spaces" not "might be affected by whitespace changes". If you can tell from the source that a caller is safe, say so and why.
+
+**Callee verdicts:** (same format, only if callees exist)
+
+**Overall risk:** one sentence summary.
+
+Rules:
+- No preamble, no headers beyond what's specified above
+- No "recommended actions" or "add tests" advice
+- If all callers are safe, just say so — don't invent risks
+- If you can't determine risk from the source alone, say "needs review" with what to check"""
 
 
 def analyze_with_llm(context: str) -> str:
@@ -398,72 +434,53 @@ def generate_report(
     blast_radius: list[ChangedFunction],
     analysis: str,
 ) -> str:
-    """Generate a full markdown report."""
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    """Generate a compact markdown report for a PR comment."""
     total_callers = sum(len(cf.callers) for cf in blast_radius)
     total_callees = sum(len(cf.callees) for cf in blast_radius)
 
     lines = []
     lines.append(f"# Blast Radius Report")
     lines.append(f"")
-    lines.append(f"**PR:** [{repo_slug}#{pr_number}]({pr_url})")
-    lines.append(f"**Generated:** {now}")
+    lines.append(f"**{len(blast_radius)}** functions changed | **{total_callers}** callers | **{total_callees}** callees")
     lines.append(f"")
 
-    # Summary stats
-    lines.append(f"## Summary")
-    lines.append(f"")
-    lines.append(f"| Metric | Count |")
-    lines.append(f"|--------|-------|")
-    lines.append(f"| Python files changed | {len(changed_hunks)} |")
-    lines.append(f"| Functions changed | {len(blast_radius)} |")
-    lines.append(f"| Callers (1 level up) | {total_callers} |")
-    lines.append(f"| Callees (1 level down) | {total_callees} |")
-    lines.append(f"")
-
-    # Changed functions detail
-    lines.append(f"## Changed Functions")
-    lines.append(f"")
+    # Callers/callees per changed function (collapsible if many)
     for cf in blast_radius:
-        lines.append(f"### `{cf.info.name}`")
-        lines.append(f"**File:** `{cf.info.file_path}:{cf.info.start_line}-{cf.info.end_line}`")
-        lines.append(f"")
-        lines.append(f"```python")
-        lines.append(cf.info.source)
-        lines.append(f"```")
+        lines.append(f"### `{cf.info.name}` (`{cf.info.file_path}:{cf.info.start_line}`)")
         lines.append(f"")
 
         if cf.callers:
-            lines.append(f"**Callers ({len(cf.callers)}):**")
-            lines.append(f"")
-            for caller in cf.callers:
-                lines.append(f"- `{caller.name}` (`{caller.file_path}:{caller.start_line}`)")
+            caller_lines = [f"- `{c.name}` (`{c.file_path}:{c.start_line}`)" for c in cf.callers]
+            if len(cf.callers) > 5:
+                lines.append(f"<details>")
+                lines.append(f"<summary>Callers ({len(cf.callers)})</summary>")
+                lines.append(f"")
+                lines.extend(caller_lines)
+                lines.append(f"")
+                lines.append(f"</details>")
+            else:
+                lines.append(f"**Callers ({len(cf.callers)}):**")
+                lines.extend(caller_lines)
             lines.append(f"")
 
         if cf.callees:
-            lines.append(f"**Callees ({len(cf.callees)}):**")
-            lines.append(f"")
-            for callee in cf.callees:
-                lines.append(f"- `{callee.name}` (`{callee.file_path}:{callee.start_line}`)")
+            callee_lines = [f"- `{c.name}` (`{c.file_path}:{c.start_line}`)" for c in cf.callees]
+            if len(cf.callees) > 5:
+                lines.append(f"<details>")
+                lines.append(f"<summary>Callees ({len(cf.callees)})</summary>")
+                lines.append(f"")
+                lines.extend(callee_lines)
+                lines.append(f"")
+                lines.append(f"</details>")
+            else:
+                lines.append(f"**Callees ({len(cf.callees)}):**")
+                lines.extend(callee_lines)
             lines.append(f"")
 
     # LLM analysis
-    lines.append(f"## LLM Analysis")
+    lines.append(f"---")
     lines.append(f"")
     lines.append(analysis)
-    lines.append(f"")
-
-    # Diff (collapsed)
-    lines.append(f"## Diff")
-    lines.append(f"")
-    lines.append(f"<details>")
-    lines.append(f"<summary>Full diff ({len(diff_text.splitlines())} lines)</summary>")
-    lines.append(f"")
-    lines.append(f"```diff")
-    lines.append(diff_text)
-    lines.append(f"```")
-    lines.append(f"")
-    lines.append(f"</details>")
 
     return "\n".join(lines)
 
