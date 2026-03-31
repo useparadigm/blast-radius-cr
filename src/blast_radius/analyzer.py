@@ -144,6 +144,50 @@ def analyze(contexts: list[FunctionContext], model: str = "claude-sonnet-4-20250
     if "thinking" not in kwargs:
         text = "**VERDICT:" + text
 
+    return _trim_reasoning(text)
+
+
+def _trim_reasoning(text: str) -> str:
+    """Strip reasoning steps, keep only the final report.
+
+    The model often outputs Step 1/2/3... analysis before the actual report.
+    We find the verdict line and the report structure, and drop everything else.
+    """
+    lines = text.splitlines()
+
+    # Find the VERDICT line
+    verdict_idx = None
+    for i, line in enumerate(lines):
+        if "VERDICT:" in line.upper() and ("FAIL" in line.upper() or "WARNING" in line.upper() or "PASS" in line.upper()):
+            verdict_idx = i
+            # Take the LAST verdict line (the one in the actual report, not reasoning)
+            # But if the first line is the verdict (from prefill), use that
+
+    if verdict_idx is None:
+        return text
+
+    # Find where the actual report starts: verdict followed by ### Summary or ### Findings
+    report_start = verdict_idx
+    for i in range(verdict_idx, len(lines)):
+        if lines[i].strip().startswith("### Summary") or lines[i].strip().startswith("### Findings"):
+            # Report starts at the verdict line before this
+            for j in range(i - 1, -1, -1):
+                if "VERDICT:" in lines[j].upper():
+                    report_start = j
+                    break
+            break
+
+    # Check if there's reasoning before the report (Steps, analysis, etc.)
+    has_reasoning = False
+    for i in range(report_start):
+        line = lines[i].strip()
+        if line.startswith("## Step") or line.startswith("**Step") or line.startswith("I'll analyze") or line.startswith("Let me"):
+            has_reasoning = True
+            break
+
+    if has_reasoning:
+        return "\n".join(lines[report_start:])
+
     return text
 
 
