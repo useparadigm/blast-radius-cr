@@ -111,3 +111,33 @@ def get_diff(ref: str | None = None, diff_file: str | None = None, repo_dir: str
     if result.returncode != 0:
         raise RuntimeError(f"git diff failed: {result.stderr}")
     return result.stdout
+
+
+def resolve_base_ref(ref: str | None = None, repo_dir: str = ".") -> str:
+    """Determine the git ref for the 'old' side of the diff.
+
+    Mirrors the logic in get_diff(): if ref is given use it,
+    otherwise try staged changes (→ HEAD) then fall back to HEAD~1.
+    """
+    if ref is not None:
+        return ref
+
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        capture_output=True, cwd=repo_dir,
+    )
+    if result.returncode != 0:
+        # Has staged changes — old side is HEAD
+        return "HEAD"
+    return "HEAD~1"
+
+
+def get_old_file_content(file_path: str, base_ref: str, repo_dir: str = ".") -> str | None:
+    """Retrieve file content from a git ref. Returns None if file didn't exist."""
+    result = subprocess.run(
+        ["git", "show", f"{base_ref}:{file_path}"],
+        capture_output=True, text=True, cwd=repo_dir,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout

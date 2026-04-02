@@ -25,6 +25,14 @@ def format_context_markdown(contexts: list[FunctionContext]) -> str:
         lines.append(f"## {_func_ref(f)} [{ctx.change_type}]")
         lines.append("")
 
+        if ctx.change_type == "deleted" and ctx.old_body:
+            lines.append("**Deleted body:**")
+            lines.append(f"```\n{ctx.old_body}\n```")
+            lines.append("")
+        elif ctx.old_body and ctx.old_body != f.body:
+            lines.append("**Old body → New body changed**")
+            lines.append("")
+
         if ctx.callers:
             lines.append(f"### Callers ({len(ctx.callers)})")
             for c in ctx.callers:
@@ -59,6 +67,7 @@ def format_context_json(contexts: list[FunctionContext]) -> str:
                 "call_sites": f.call_sites,
             },
             "change_type": ctx.change_type,
+            "old_body": ctx.old_body if ctx.old_body else None,
             "callers": [
                 {
                     "name": c.name,

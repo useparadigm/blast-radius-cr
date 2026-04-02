@@ -1,55 +1,70 @@
 # blast-radius
 
-Find what breaks before it ships. Automated blast radius analysis for pull requests.
+Find what breaks before it ships.
 
-For every changed function in your PR, blast-radius finds all callers and callees, then uses an LLM to identify breaking changes, behavioral shifts, and silent failures.
+blast-radius statically analyzes your PR, finds every caller of every changed function, and asks an LLM: "will this break anything?"
 
 ```
-git diff → tree-sitter (changed functions) → grep (callers/callees) → LLM analysis → verdict
+git diff → tree-sitter (changed functions) → grep (callers) → LLM analysis → verdict
 ```
 
-## Example output
+No LSP, no build step, no project configuration. Works on any repo with Python, JavaScript, TypeScript, or Go.
+
+## What you get
 
 On a PR that changes `clean_neo4j_value()` to return `""` instead of `None`:
 
-> **VERDICT: FAIL**
->
-> ```
-> BREAKING | clean_neo4j_value → ALL 13 callers | Return value changed from None to ""
->   Why: Existing callers don't pass the new default parameter, so they get default="",
->        changing None returns to "" returns
->   Evidence: Every caller like file_path=clean_neo4j_value(record.get("file_path"))
->            now gets "" instead of None for missing file paths
->   Action: BLOCK MERGE - this breaks the data contract
-> ```
+```
+VERDICT: FAIL
+
+Summary
+Return value contract changed — 13 callers expect None for missing values, now get "".
+
+Findings
+🔴 clean_neo4j_value → ALL 13 callers | Return value changed from None to ""
+   Why: Callers like file_path=clean_neo4j_value(record.get("file_path")) now get ""
+   instead of None for missing data — breaks every `if value is None` check downstream.
+
+Action items
+🚫 BLOCK — revert default return or update all 13 callers to handle ""
+```
+
+On a PR that adds an early-return ASCII fast path to `cell_len()`:
+
+```
+VERDICT: PASS
+
+Summary
+Performance optimization — ASCII fast path returns same values, no caller impact.
+
+Findings
+✅ cell_len — safe (early return for ASCII produces identical results)
+```
 
 ## Install
 
 ```bash
-pip install git+https://github.com/useparadigm/blast-radius-cr.git
+pip install blast-radius-analysis
 ```
 
-## Usage
+## Quick start
 
 ```bash
-# Analyze last commit
+export ANTHROPIC_API_KEY=sk-...
+
+# Analyze the last commit
 blast-radius
 
-# Analyze against main branch
+# Analyze your branch against main
 blast-radius --ref origin/main
 
-# Just show callers/callees, no LLM
-blast-radius --no-ai --format json
-
-# Full options
-blast-radius --ref origin/main --fuel 20 --model claude-sonnet-4-20250514 --verbose
+# See what the LLM will see, without calling it
+blast-radius --no-ai --verbose
 ```
-
-Requires `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) in your environment.
 
 ## GitHub Actions
 
-Add to `.github/workflows/blast-radius.yml`:
+Add this to `.github/workflows/blast-radius.yml` and every PR gets a blast radius comment:
 
 ```yaml
 name: Blast Radius
@@ -72,20 +87,21 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install blast-radius
-        run: pip install git+https://github.com/useparadigm/blast-radius-cr.git
+      - name: Install
+        run: pip install blast-radius-analysis
 
-      - name: Run analysis
+      - name: Analyze
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: blast-radius --ref origin/${{ github.base_ref }} --output report.md --verbose
+        run: blast-radius --ref origin/${{ github.base_ref }} --verbose --output report.md
 
-      - name: Post PR comment
-        if: success()
+      - name: Comment on PR
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
+            if (!fs.existsSync('report.md')) return;
             const report = fs.readFileSync('report.md', 'utf8');
             if (!report.trim()) return;
             await github.rest.issues.createComment({
@@ -96,26 +112,43 @@ jobs:
             });
 ```
 
+That's it. Add `ANTHROPIC_API_KEY` to your repo secrets and open a PR.
+
 ## How it works
 
-1. **Diff parsing** — parses `git diff` into structured file changes and hunks
-2. **Symbol extraction** — tree-sitter parses changed files, extracts functions with line ranges, intersects with diff hunks to find changed functions
-3. **Context resolution** — `grep` finds all callers across the repo, tree-sitter validates they're real call sites and identifies the containing function. Same process for callees
-4. **LLM analysis** — 7-step forced reasoning: what changed, return value analysis, signature analysis, side effects, caller-by-caller impact, classification, verdict
+1. **Diff** — parses `git diff` into file changes and hunks
+2. **Extract** — tree-sitter parses changed files, finds which functions overlap with changed hunks
+3. **Resolve** — `grep` finds all callers across the repo, tree-sitter validates they're real call sites and identifies the containing function. Same for callees.
+4. **Analyze** — LLM sees the full diff, old and new function bodies, and the bodies of every caller and callee. Classifies each finding:
+   - **BREAKING** — will cause failures (return type changed, parameter removed)
+   - **CAUTION** — may cause issues (behavioral change, new exception path)
+   - **SAFE** — no impact (internal refactor, additive change)
+5. **Verdict** — FAIL (has BREAKING) / WARNING (has CAUTION) / PASS (all SAFE)
 
-The LLM sees the full diff, the changed function body, and the bodies of all callers and callees. It classifies each finding as:
+### What the LLM sees
 
-- **BREAKING** — will cause failures (return type changes, removed functionality)
-- **CAUTION** — may cause issues (behavioral changes, performance)
-- **SAFE** — no impact (internal refactors, additive changes)
+For each changed function, the prompt includes:
 
-Verdict: **FAIL** (has BREAKING) / **WARNING** (has CAUTION) / **PASS** (all SAFE).
+- Old and new function body (before/after)
+- Unified diff
+- Full body of every caller (who calls this function?)
+- Full body of every callee (what does this function call?)
 
-## Supported languages
+The LLM checks against a breaking change checklist: deleted functions with callers, removed/reordered parameters, changed defaults, return type changes, new exceptions, behavioral changes.
 
-Python, JavaScript, TypeScript, Go (via tree-sitter grammars).
+## Cost
 
-## CLI options
+~$0.03–$0.30 per PR depending on diff size. Default caps at ~100K input tokens (~$0.30 on Sonnet).
+
+```bash
+# See token count and cost estimate before running
+blast-radius --no-ai --verbose
+
+# Cap spending
+blast-radius --max-callers 5 --max-body-lines 30 --max-tokens 50000
+```
+
+## CLI reference
 
 ```
 blast-radius [OPTIONS]
@@ -133,31 +166,17 @@ blast-radius [OPTIONS]
   --repo PATH           Repository directory (default: cwd)
 ```
 
-### Budget control
+## Supported languages
 
-By default, blast-radius caps LLM input at ~100K tokens (~$0.30 on Sonnet). For large PRs you can tune:
+Python, JavaScript, TypeScript (including TSX), Go — via tree-sitter grammars.
 
-```bash
-# Cheap and fast: fewer callers, smaller bodies
-blast-radius --max-callers 5 --max-body-lines 30 --max-tokens 50000
-
-# Thorough: more context
-blast-radius --max-callers 30 --max-functions 50 --max-tokens 200000
-
-# See what you're paying before running
-blast-radius --no-ai --verbose  # shows token estimate and cost
-```
-
-With `--verbose`, you'll see:
-```
-Context: ~12,450 tokens (3 functions, 8 callers, 2 callees) | Estimated cost: $0.037 (claude-sonnet-4-20250514)
-```
+Go requires an extra dependency: `pip install blast-radius-analysis[go]`
 
 ## Development
 
 ```bash
-git clone https://github.com/useparadigm/blast-radius-cr.git
-cd blast-radius-cr
+git clone https://github.com/useparadigm/blast-radius.git
+cd blast-radius
 pip install -e ".[dev]"
 pytest
 ```

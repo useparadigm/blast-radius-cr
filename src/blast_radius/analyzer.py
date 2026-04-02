@@ -9,8 +9,22 @@ from .resolver import FunctionContext
 
 SYSTEM_PROMPT = """\
 You are a blast radius analyzer. Output goes on a GitHub PR comment — be short and scannable.
-A new default parameter that changes return values for existing callers IS breaking.
-Never write analysis steps. Only output the final report."""
+Never write analysis steps. Only output the final report.
+
+BREAKING CHANGE CHECKLIST — flag any of these:
+- Function/method DELETED that has callers
+- Parameter REMOVED or REORDERED (positional)
+- Default value CHANGED (e.g. True→False, None→"", timeout 30→5)
+- Return type/shape changed (dict→model, single value→tuple, etc.)
+- Property/attribute REMOVED or renamed
+- New exception raised where none was before
+- Behavioral change: same inputs now produce different outputs
+When OLD and NEW bodies are both shown, DIFF them mentally. Identical signatures with different internal logic ARE potentially breaking.
+A performance optimization that adds an early-return path but produces IDENTICAL return values is NOT breaking.
+
+NOTE: Callers/callees are found by grep + tree-sitter (name matching). Some may be FALSE POSITIVES —
+different functions with the same name, or unrelated methods. Check signatures and arguments to confirm
+each caller/callee is actually calling the changed function before flagging it."""
 
 ANALYSIS_PROMPT = """\
 {context}
@@ -48,14 +62,27 @@ def build_prompt(contexts: list[FunctionContext]) -> str:
         parts.append(f"### Changed function: `{cls}{f.name}` ({f.file_path}:{f.start_line}) [{ctx.change_type}]")
         parts.append("")
 
-        if ctx.diff_text:
-            parts.append("**Diff (what changed — lines prefixed with - are OLD, + are NEW):**")
-            parts.append(f"```diff\n{ctx.diff_text}\n```")
+        # Show before/after bodies
+        if ctx.change_type == "deleted":
+            parts.append("**[DELETED] — this function was removed. Body before deletion:**")
+            parts.append(f"```\n{ctx.old_body or f.body}\n```")
+            parts.append("")
+        elif ctx.old_body and ctx.old_body != f.body:
+            parts.append("**OLD body (before change):**")
+            parts.append(f"```\n{ctx.old_body}\n```")
+            parts.append("")
+            parts.append("**NEW body (after change):**")
+            parts.append(f"```\n{f.body}\n```")
+            parts.append("")
+        else:
+            parts.append("**Current body:**")
+            parts.append(f"```\n{f.body}\n```")
             parts.append("")
 
-        parts.append("**Current body:**")
-        parts.append(f"```\n{f.body}\n```")
-        parts.append("")
+        if ctx.diff_text:
+            parts.append("**Unified diff (for reference):**")
+            parts.append(f"```diff\n{ctx.diff_text}\n```")
+            parts.append("")
 
         if ctx.callers:
             parts.append(f"**Callers ({len(ctx.callers)}):**")

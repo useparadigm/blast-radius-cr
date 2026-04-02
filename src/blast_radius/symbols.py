@@ -148,18 +148,29 @@ def extract_functions(source: str, file_path: str, lang: str | None = None) -> l
 def identify_changed_functions(
     file_change: FileChange,
     repo_dir: str = ".",
+    base_ref: str | None = None,
 ) -> list[ChangedFunction]:
     """Given a FileChange, identify which functions were modified/added/deleted."""
-    path = Path(repo_dir) / file_change.path
+    from .diff import get_old_file_content
+
     lang = detect_language(file_change.path)
     if lang is None:
         return []
 
+    # --- Deleted files: parse OLD version to find all deleted functions ---
     if file_change.status == "deleted":
-        # For deleted files, we can't read the current version.
-        # The caller should handle this via git show or old version.
-        return []
+        if not base_ref:
+            return []
+        old_content = get_old_file_content(file_change.path, base_ref, repo_dir)
+        if not old_content:
+            return []
+        old_functions = extract_functions(old_content, file_change.path, lang)
+        return [
+            ChangedFunction(symbol=f, hunks=file_change.hunks, change_type="deleted")
+            for f in old_functions
+        ]
 
+    path = Path(repo_dir) / file_change.path
     if not path.exists():
         return []
 
@@ -172,6 +183,7 @@ def identify_changed_functions(
             for f in functions
         ]
 
+    # --- Modified/renamed files: hunk overlap detection ---
     changed: list[ChangedFunction] = []
     for func in functions:
         overlapping = [
@@ -184,5 +196,22 @@ def identify_changed_functions(
                 hunks=overlapping,
                 change_type="modified",
             ))
+
+    # --- Detect functions deleted within a modified/renamed file ---
+    if base_ref and file_change.status in ("modified", "renamed"):
+        old_path = file_change.old_path or file_change.path
+        old_content = get_old_file_content(old_path, base_ref, repo_dir)
+        if old_content:
+            old_functions = extract_functions(old_content, old_path, lang)
+            new_names = {f.name for f in functions}
+            for old_func in old_functions:
+                if old_func.name not in new_names:
+                    # Fix file_path to point to new path (for caller search)
+                    old_func.file_path = file_change.path
+                    changed.append(ChangedFunction(
+                        symbol=old_func,
+                        hunks=file_change.hunks,
+                        change_type="deleted",
+                    ))
 
     return changed

@@ -35,6 +35,7 @@ class FunctionContext:
     callees: list[FunctionSymbol] = field(default_factory=list)
     change_type: str = "modified"
     diff_text: str = ""  # raw diff for this file
+    old_body: str = ""  # old version of function body (before change)
 
 
 def _should_skip(path: str) -> bool:
@@ -234,7 +235,9 @@ def resolve_context(
         if len(ctx.callers) >= fuel:
             break
 
-    # --- Find callees ---
+    # --- Find callees (skip for deleted functions — irrelevant) ---
+    if change_type == "deleted":
+        return ctx
     lang = detect_language(func.file_path)
     if lang and func.call_sites:
         seen_callees: set[str] = set()

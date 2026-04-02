@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "blast-radius"
-version = "0.1.0"
+name = "blast-radius-analysis"
+version = "0.2.0"
 description = "Blast radius analysis for code reviews. Find what breaks before it ships."
 readme = "README.md"
 license = "MIT"
@@ -23,7 +23,6 @@ go = ["tree-sitter-go>=0.23"]
 openai = ["openai>=1.0"]
 dev = [
     "pytest>=7.0",
-    "pytest-snapshot",
 ]
 
 [project.scripts]

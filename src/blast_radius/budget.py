@@ -50,6 +50,7 @@ def estimate_context_tokens(contexts: list[FunctionContext]) -> int:
     total = 0
     for ctx in contexts:
         total += estimate_tokens(ctx.function.body)
+        total += estimate_tokens(ctx.old_body)
         total += estimate_tokens(ctx.diff_text)
         for c in ctx.callers:
             total += estimate_tokens(c.body)
@@ -105,6 +106,8 @@ def apply_budget(
             truncated = True
 
         ctx.function.body = truncate_body(ctx.function.body, max_body_lines)
+        if ctx.old_body:
+            ctx.old_body = truncate_body(ctx.old_body, max_body_lines)
         for c in ctx.callers:
             c.body = truncate_body(c.body, max_body_lines)
         for c in ctx.callees:
